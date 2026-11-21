@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened global primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Blueprint validator: DataPoint
+    function isValidDataPoint(data) {
+      return data.keys().hasAll(['timestamp', 'value', 'metric', 'userId']) &&
+             data.keys().hasOnly(['timestamp', 'value', 'metric', 'userId']) &&
+             data.timestamp is string && data.timestamp.size() >= 10 && data.timestamp.size() <= 64 &&
+             data.value is number &&
+             data.metric is string && data.metric.size() >= 1 && data.metric.size() <= 100 &&
+             data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid;
+    }
+
+    // Blueprint validator: AnalysisReport
+    function isValidReport(data) {
+      return data.keys().hasAll(['timestamp', 'content', 'status', 'metric', 'datasetName', 'sampleCount', 'userId']) &&
+             data.keys().hasOnly(['timestamp', 'content', 'status', 'metric', 'datasetName', 'sampleCount', 'userId']) &&
+             data.timestamp is string && data.timestamp.size() >= 10 && data.timestamp.size() <= 64 &&
+             data.content is string && data.content.size() >= 1 && data.content.size() <= 100000 &&
+             data.status is string && data.status.size() <= 16 && data.status in ['RÖD', 'GUL', 'GRÖN'] &&
+             data.metric is string && data.metric.size() >= 1 && data.metric.size() <= 100 &&
+             data.datasetName is string && data.datasetName.size() >= 1 && data.datasetName.size() <= 200 &&
+             data.sampleCount is int && data.sampleCount >= 0 && data.sampleCount <= 1000000 &&
+             data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid;
+    }
+
+    match /production_data/{dataId} {
+      allow get: if isSignedIn() && isValidId(dataId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(dataId) && isValidDataPoint(incoming());
+      allow update: if false;
+      allow delete: if isVerified() && isValidId(dataId) && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    match /reports/{reportId} {
+      allow get: if isSignedIn() && isValidId(reportId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(reportId) && isValidReport(incoming());
+      allow update: if false;
+      allow delete: if isVerified() && isValidId(reportId) && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    match /admins/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && userId == request.auth.uid;
+      allow list: if false;
+      allow write: if false;
+    }
+  }
+}

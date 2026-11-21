@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "DataPoint": {
+      "title": "Production Data Point",
+      "description": "A single measurement point associated with a user",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string", "format": "date-time", "minLength": 10, "maxLength": 64 },
+        "value": { "type": "number" },
+        "metric": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "required": ["timestamp", "value", "metric", "userId"]
+    },
+    "AnalysisReport": {
+      "title": "AI Analysis Report",
+      "description": "An AI-generated SPC production report owned by a signed-in user",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string", "format": "date-time", "minLength": 10, "maxLength": 64 },
+        "content": { "type": "string", "minLength": 1, "maxLength": 100000 },
+        "status": { "type": "string", "enum": ["RÖD", "GUL", "GRÖN"] },
+        "metric": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "datasetName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "sampleCount": { "type": "integer" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "required": ["timestamp", "content", "status", "metric", "datasetName", "sampleCount", "userId"]
+    },
+    "AdminRecord": {
+      "title": "Admin Record",
+      "description": "System-managed administrator identity record",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["admin"] }
+      },
+      "required": ["role"]
+    }
+  },
+  "firestore": {
+    "/production_data/{dataId}": {
+      "schema": "DataPoint",
+      "description": "User-owned production measurements"
+    },
+    "/reports/{reportId}": {
+      "schema": "AnalysisReport",
+      "description": "Private historical AI reports scoped to each user"
+    },
+    "/admins/{userId}": {
+      "schema": "AdminRecord",
+      "description": "Read-only admin registry managed via Firebase Console"
+    }
+  }
+}

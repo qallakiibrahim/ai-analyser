@@ -1,0 +1,136 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+}
+
+@layer base {
+  :root {
+    --background: #f8fafc;
+    --foreground: #0f172a;
+    --card: #ffffff;
+    --card-foreground: #0f172a;
+    --border: #e2e8f0;
+    --primary: #1d4ed8;
+    --primary-foreground: #ffffff;
+    --muted: #f1f5f9;
+    --muted-foreground: #475569;
+  }
+
+  .dark {
+    --background: #0b1120;
+    --foreground: #f1f5f9;
+    --card: #111a2e;
+    --card-foreground: #f1f5f9;
+    --border: #23304a;
+    --primary: #3b82f6;
+    --primary-foreground: #ffffff;
+    --muted: #162238;
+    --muted-foreground: #94a3b8;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased transition-colors duration-200;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  .prose h1, .prose h2, .prose h3 {
+    @apply font-semibold tracking-tight mt-7 mb-3 text-foreground;
+  }
+
+  .prose h1 { @apply text-2xl; }
+  .prose h2 { @apply text-lg border-b border-border pb-2; }
+  .prose h3 { @apply text-base; }
+
+  .prose p {
+    @apply mb-3.5 leading-relaxed text-muted-foreground;
+  }
+
+  .prose ul, .prose ol {
+    @apply mb-4 space-y-2 pl-5;
+  }
+
+  .prose ul { @apply list-disc; }
+  .prose ol { @apply list-decimal; }
+
+  .prose li {
+    @apply text-muted-foreground leading-relaxed;
+  }
+
+  .prose strong {
+    @apply font-semibold text-foreground;
+  }
+}
+
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  .print\:hidden,
+  .no-print {
+    display: none !important;
+  }
+
+  .prose {
+    max-width: none !important;
+    padding: 0 !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  .prose h1, .prose h2, .prose h3 {
+    color: #1d4ed8 !important;
+    page-break-after: avoid;
+  }
+
+  .prose h2 {
+    border-bottom: 1px solid #cbd5e1 !important;
+  }
+
+  .prose p, .prose li {
+    color: #334155 !important;
+  }
+
+  .card-print {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .sixpack-print-overlay {
+    position: static !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+
+  .sixpack-print-sheet {
+    max-width: none !important;
+    max-height: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+}

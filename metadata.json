@@ -1,0 +1,8 @@
+{
+  "name": "Production AI Analyst",
+  "description": "An AI-powered production analysis dashboard for statistical process control (Cp/Cpk), anomaly detection, and prescriptive recommendations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
