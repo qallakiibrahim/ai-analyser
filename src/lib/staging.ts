@@ -168,7 +168,8 @@ export function buildStagedChartSeries(
   globalStats: StatsResult,
   mode: StagingMode,
   manualSplitRows: number[],
-  categoryColumn: string
+  categoryColumn: string,
+  manualStageLabels: Record<number, string> = {}
 ): StagedSeriesResult {
   if (series.length === 0) {
     return {
@@ -242,11 +243,9 @@ export function buildStagedChartSeries(
       resolvedSplitRows = detectAutomaticStageSplits(rows, metric, 4);
       autoNote =
         resolvedSplitRows.length > 0
-          ? `Automatisk skiftdetektering hittade ${resolvedSplitRows.length} tydlig${
-              resolvedSplitRows.length === 1 ? 't' : 'a'
-            } processkift (rad ${resolvedSplitRows.map((r) => `#${r}`).join(', ')}) och delade in grafen i ${
-              resolvedSplitRows.length + 1
-            } steg.`
+          ? `Skiftdetektering hittade ${resolvedSplitRows.length} statistiskt nivåskift (rad ${resolvedSplitRows
+              .map((r) => `#${r}`)
+              .join(', ')}) och delade grafen i ${resolvedSplitRows.length + 1} steg.`
           : 'Inga statistiskt signifikanta nivåskift hittades — processen visas som ett sammanhängande steg.';
     } else {
       const minRow = series[0].rowIndex;
@@ -258,28 +257,37 @@ export function buildStagedChartSeries(
 
     let stageNum = 1;
     let currentPoints: ChartPoint[] = [];
+    let currentStartSplitRow: number | null = null;
     let splitPointer = 0;
+
+    const formatStageLabel = (num: number, splitRow: number | null) => {
+      if (mode === 'auto') return `Auto Steg ${num}`;
+      const custom = splitRow !== null ? manualStageLabels[splitRow]?.trim() : '';
+      return custom ? `Steg ${num}: ${custom}` : `Steg ${num}`;
+    };
 
     for (const pt of series) {
       while (
         splitPointer < resolvedSplitRows.length &&
         pt.rowIndex >= resolvedSplitRows[splitPointer]
       ) {
+        const triggerSplitRow = resolvedSplitRows[splitPointer];
         if (currentPoints.length > 0) {
           buckets.push({
-            label: mode === 'auto' ? `Auto Steg ${stageNum}` : `Steg ${stageNum}`,
+            label: formatStageLabel(stageNum, currentStartSplitRow),
             points: currentPoints,
           });
           stageNum++;
           currentPoints = [];
         }
+        currentStartSplitRow = triggerSplitRow;
         splitPointer++;
       }
       currentPoints.push(pt);
     }
     if (currentPoints.length > 0) {
       buckets.push({
-        label: mode === 'auto' ? `Auto Steg ${stageNum}` : `Steg ${stageNum}`,
+        label: formatStageLabel(stageNum, currentStartSplitRow),
         points: currentPoints,
       });
     }

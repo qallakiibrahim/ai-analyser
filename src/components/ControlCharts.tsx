@@ -142,7 +142,9 @@ export function ControlCharts({
   // SPC Staging state
   const [stagingMode, setStagingMode] = useState<StagingMode>('none');
   const [manualSplitRows, setManualSplitRows] = useState<number[]>([]);
+  const [manualStageLabels, setManualStageLabels] = useState<Record<number, string>>({});
   const [newSplitInput, setNewSplitInput] = useState<string>('');
+  const [newSplitLabel, setNewSplitLabel] = useState<string>('');
   const [stageCategoryCol, setStageCategoryCol] = useState<string>(categoryColumns[0] || '');
 
   // Keep stageCategoryCol valid when dataset changes
@@ -185,9 +187,20 @@ export function ControlCharts({
         stats,
         stagingMode,
         manualSplitRows,
-        stageCategoryCol
+        stageCategoryCol,
+        manualStageLabels
       ),
-    [rows, series, selectedMetric, spec, stats, stagingMode, manualSplitRows, stageCategoryCol]
+    [
+      rows,
+      series,
+      selectedMetric,
+      spec,
+      stats,
+      stagingMode,
+      manualSplitRows,
+      stageCategoryCol,
+      manualStageLabels,
+    ]
   );
 
   const isMultiStage = staged.stages.length > 1;
@@ -333,12 +346,21 @@ export function ControlCharts({
     const parsed = parseInt(newSplitInput, 10);
     if (!Number.isFinite(parsed) || parsed < minRow || parsed > maxRow) return;
     setManualSplitRows((prev) => Array.from(new Set([...prev, parsed])).sort((a, b) => a - b));
+    if (newSplitLabel.trim()) {
+      setManualStageLabels((prev) => ({ ...prev, [parsed]: newSplitLabel.trim() }));
+    }
     setNewSplitInput('');
+    setNewSplitLabel('');
     setStagingMode('manual');
   };
 
   const handleRemoveManualSplit = (rowNum: number) => {
     setManualSplitRows((prev) => prev.filter((r) => r !== rowNum));
+    setManualStageLabels((prev) => {
+      const next = { ...prev };
+      delete next[rowNum];
+      return next;
+    });
   };
 
   const handleCopyAutoSplitsToManual = () => {
@@ -676,20 +698,26 @@ export function ControlCharts({
             </div>
           </div>
 
-          {/* Automatic Staging Feedback Banner */}
+          {/* Automatic Staging Feedback Banner with IATF 16949 Compliance Note */}
           {stagingMode === 'auto' && staged.autoNote && (
-            <div className="pt-2.5 border-t border-border/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-              <div className="flex items-center gap-2 text-foreground">
-                <Sparkles className="w-3.5 h-3.5 text-primary shrink-0" />
-                <span>{staged.autoNote}</span>
+            <div className="pt-2.5 border-t border-border/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2 text-foreground">
+                  <Sparkles className="w-3.5 h-3.5 text-primary shrink-0" />
+                  <span>{staged.autoNote}</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground pl-5">
+                  Analysläge (IATF 16949): bekräfta skiftet mot verklig processändring i loggen och
+                  konvertera till <strong className="text-foreground">Manuell</strong> före PPAP-rapportering.
+                </p>
               </div>
               {staged.splitRows.length > 0 && (
                 <button
                   type="button"
                   onClick={handleCopyAutoSplitsToManual}
-                  className="text-xs font-medium text-primary hover:underline cursor-pointer whitespace-nowrap"
+                  className="text-xs font-medium text-primary hover:underline cursor-pointer whitespace-nowrap self-start sm:self-center"
                 >
-                  Justera brytpunkter manuellt
+                  Konvertera till manuella steg →
                 </button>
               )}
             </div>
@@ -697,18 +725,21 @@ export function ControlCharts({
 
           {/* Manual Split Points Editor */}
           {stagingMode === 'manual' && (
-            <div className="pt-2.5 border-t border-border/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="pt-2.5 border-t border-border/80 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-muted-foreground">Brytpunkter (nytt steg startar vid rad):</span>
+                <span className="text-muted-foreground">Brytpunkter (ny fas startar vid rad):</span>
                 {manualSplitRows.length === 0 ? (
                   <span className="text-muted-foreground italic">Inga brytpunkter tillagda</span>
                 ) : (
                   manualSplitRows.map((rowNum) => (
                     <span
                       key={rowNum}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-card border border-border font-mono tabular-nums text-foreground"
+                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-card border border-border text-foreground"
                     >
-                      Rad #{rowNum}
+                      <span className="font-mono tabular-nums font-medium">#{rowNum}</span>
+                      {manualStageLabels[rowNum] && (
+                        <span className="text-muted-foreground">· {manualStageLabels[rowNum]}</span>
+                      )}
                       <button
                         type="button"
                         onClick={() => handleRemoveManualSplit(rowNum)}
@@ -722,7 +753,7 @@ export function ControlCharts({
                 )}
               </div>
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <input
                   type="number"
                   min={series.length > 0 ? series[0].rowIndex + 1 : 2}
@@ -732,10 +763,20 @@ export function ControlCharts({
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleAddManualSplit();
                   }}
-                  placeholder={`Rad # (${series[0]?.rowIndex ? series[0].rowIndex + 1 : 2}–${
+                  placeholder={`Rad (${series[0]?.rowIndex ? series[0].rowIndex + 1 : 2}–${
                     series[series.length - 1]?.rowIndex ?? 60
                   })`}
-                  className="w-32 h-8 px-2.5 font-mono tabular-nums text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="w-24 h-8 px-2.5 font-mono tabular-nums text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <input
+                  type="text"
+                  value={newSplitLabel}
+                  onChange={(e) => setNewSplitLabel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleAddManualSplit();
+                  }}
+                  placeholder="Orsak / fas (t.ex. Nytt verktyg)"
+                  className="w-44 h-8 px-2.5 text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                 />
                 <Button variant="outline" size="sm" onClick={handleAddManualSplit}>
                   <Plus className="w-3.5 h-3.5" />
@@ -883,11 +924,36 @@ export function ControlCharts({
         )}
 
         {/* Individuals (I) Chart */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span className="font-semibold text-foreground">
-              Individuella mätvärden (I-Chart)
-            </span>
+        <div className="space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-4">
+              <span className="font-semibold text-foreground">
+                Individuella mätvärden (I-Chart)
+              </span>
+              {/* Crisp inline chart legend */}
+              <div className="hidden sm:flex items-center gap-3.5 text-[11px] text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-3 h-0.5 bg-primary inline-block rounded-full" />
+                  Mätvärde
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-3 h-0 border-t border-dashed border-amber-600 inline-block" />
+                  UCL/LCL
+                </span>
+                {showSpecLines && spec.usl > spec.lsl && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-3 h-0 border-t border-dashed border-rose-600 inline-block" />
+                    {spec.uslLabel || 'USL'}/{spec.lslLabel || 'LSL'}
+                  </span>
+                )}
+                {excludedRowsList.length > 0 && (
+                  <span className="inline-flex items-center gap-1">
+                    <span className="font-mono font-bold text-slate-500">×</span>
+                    Exkluderad
+                  </span>
+                )}
+              </div>
+            </div>
             <span className="font-mono tabular-nums">
               {isMultiStage
                 ? `Stegvisa kontrollgränser (${staged.stages.length} steg)`
@@ -895,13 +961,13 @@ export function ControlCharts({
             </span>
           </div>
 
-          <div className="h-[320px] sm:h-[360px] w-full cursor-crosshair select-none">
+          <div className="h-[330px] sm:h-[370px] w-full cursor-crosshair select-none">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart
                 data={combinedIPoints}
                 margin={{
                   top: 16,
-                  right: 38,
+                  right: 40,
                   left: showYAxis ? 16 : 8,
                   bottom: showXAxis && xAxisLabel ? 20 : 8,
                 }}
@@ -918,7 +984,12 @@ export function ControlCharts({
                 }}
                 onMouseUp={handleMouseUp}
               >
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  vertical={false}
+                  stroke="var(--border)"
+                  strokeOpacity={0.75}
+                />
                 <XAxis
                   dataKey="rowIndex"
                   type="number"
@@ -926,6 +997,7 @@ export function ControlCharts({
                   domain={['dataMin', 'dataMax']}
                   stroke="var(--muted-foreground)"
                   fontSize={11}
+                  tick={{ fontFamily: 'var(--font-mono)', fontSize: 10.5 }}
                   tickFormatter={(rowIdx) => labelByRow.get(Number(rowIdx)) || `#${rowIdx}`}
                   label={
                     showXAxis && xAxisLabel
@@ -944,7 +1016,8 @@ export function ControlCharts({
                   domain={yDomainI}
                   stroke="var(--muted-foreground)"
                   fontSize={11}
-                  width={60}
+                  tick={{ fontFamily: 'var(--font-mono)', fontSize: 10.5 }}
+                  width={62}
                   tickFormatter={(v) => Number(v).toFixed(2)}
                   label={
                     showYAxis && resolvedYLabel
@@ -1296,7 +1369,12 @@ export function ControlCharts({
                 data={mrPoints}
                 margin={{ top: 8, right: 38, left: showYAxis ? 16 : 8, bottom: 4 }}
               >
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  vertical={false}
+                  stroke="var(--border)"
+                  strokeOpacity={0.75}
+                />
                 <XAxis
                   dataKey="rowIndex"
                   type="number"
@@ -1304,6 +1382,7 @@ export function ControlCharts({
                   domain={['dataMin', 'dataMax']}
                   stroke="var(--muted-foreground)"
                   fontSize={11}
+                  tick={{ fontFamily: 'var(--font-mono)', fontSize: 10.5 }}
                   tickFormatter={(rowIdx) => labelByRow.get(Number(rowIdx)) || `#${rowIdx}`}
                 />
                 <YAxis
@@ -1311,7 +1390,8 @@ export function ControlCharts({
                   domain={yDomainMR}
                   stroke="var(--muted-foreground)"
                   fontSize={11}
-                  width={60}
+                  tick={{ fontFamily: 'var(--font-mono)', fontSize: 10.5 }}
+                  width={62}
                   tickFormatter={(v) => Number(v).toFixed(2)}
                 />
                 <Tooltip content={<CustomMRTooltip />} />

@@ -11,6 +11,7 @@ import {
   Trash2,
   Check,
   X,
+  MoreHorizontal,
 } from 'lucide-react';
 import {
   ExcludedPoint,
@@ -104,6 +105,7 @@ export default function App() {
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
   const [isSopOpen, setIsSopOpen] = useState<boolean>(false);
   const [isSixpackOpen, setIsSixpackOpen] = useState<boolean>(false);
+  const [isToolsMenuOpen, setIsToolsMenuOpen] = useState<boolean>(false);
   const [showMovingAverage, setShowMovingAverage] = useState<boolean>(false);
   const [distBins, setDistBins] = useState<number>(12);
   const [rollingWindow, setRollingWindow] = useState<number>(15);
@@ -632,16 +634,19 @@ export default function App() {
           onSignOut={logout}
         />
 
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-          {/* Workspace Context & Spec Toolbar (visible across Dashboard, Autopilot and Data views) */}
+        <main className="max-w-[1400px] mx-auto px-4 sm:px-6 py-5 space-y-5">
+          {/* Streamlined Executive Workspace Command Bar */}
           {(activeTab === 'dashboard' || activeTab === 'autopilot' || activeTab === 'data') && (
-            <Card padding="none" className="no-print px-5 py-4 space-y-4">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div className="space-y-0.5">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Card padding="none" className="no-print overflow-visible">
+              {/* Top Command Row: Context + Action Hierarchy */}
+              <div className="px-5 py-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3.5">
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                     <span>Aktivt dataset</span>
                     <span aria-hidden="true">·</span>
-                    <span className="font-mono tabular-nums">{activeRows.length} aktiva mätpunkter</span>
+                    <span className="font-mono tabular-nums">
+                      {activeRows.length} aktiva mätpunkter
+                    </span>
                     {activeExcludedCount > 0 && (
                       <>
                         <span aria-hidden="true">·</span>
@@ -660,20 +665,29 @@ export default function App() {
                         </span>
                       </>
                     )}
+                    {isStreaming && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          Demoström aktiv
+                        </span>
+                      </>
+                    )}
                   </div>
-                  <h1 className="text-lg font-semibold text-foreground tracking-tight">
+                  <h1 className="text-lg font-semibold text-foreground tracking-tight truncate">
                     {datasetName}
                   </h1>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <Button
                     variant="primary"
                     size="sm"
                     onClick={runAiAnalysis}
                     isLoading={isAnalyzing}
                   >
-                    <Brain className="w-4 h-4" />
+                    <Brain className="w-3.5 h-3.5" />
                     {isAnalyzing ? 'Analyserar...' : 'Kör AI-analys'}
                   </Button>
                   <Button
@@ -682,168 +696,223 @@ export default function App() {
                     onClick={() => setIsSixpackOpen(true)}
                     title="Öppna 1-sides utskriftsklar Capability Sixpack (PPAP)"
                   >
-                    <Printer className="w-4 h-4" />
+                    <Printer className="w-3.5 h-3.5" />
                     Sixpack / PPAP
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => setIsSopOpen(true)}>
-                    <BookOpen className="w-4 h-4" />
+                    <BookOpen className="w-3.5 h-3.5" />
                     Metodguide
                   </Button>
-                  <Button
-                    variant={isStreaming ? 'danger' : 'outline'}
-                    size="sm"
-                    onClick={handleToggleStream}
-                    title="Valfritt demoläge som matar in simulerade testpunkter"
-                  >
-                    {isStreaming ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                    {isStreaming ? 'Stoppa demo' : 'Demoström'}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleResetToSample}
-                    title="Ladda om inbyggd CNC-exempeldata"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                    Exempeldata
-                  </Button>
-                </div>
-              </div>
 
-              {/* Dynamic Column & Tolerance Controls */}
-              <div className="pt-3 border-t border-border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
-                <div className="lg:col-span-2 space-y-1">
-                  <label htmlFor="metric-select" className="text-xs font-medium text-muted-foreground">
-                    Analyserad kolumn
-                  </label>
-                  <select
-                    id="metric-select"
-                    value={selectedMetric}
-                    onChange={(e) => setSelectedMetric(e.target.value)}
-                    className="w-full h-9 px-3 text-sm font-medium bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  >
-                    {columns.map((col) => (
-                      <option key={col} value={col}>
-                        {col}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label htmlFor="lsl-input" className="text-xs font-medium text-muted-foreground">
-                    LSL (Nedre gräns)
-                  </label>
-                  <input
-                    id="lsl-input"
-                    type="number"
-                    step="any"
-                    value={activeSpec.lsl}
-                    onChange={(e) => updateActiveSpec({ lsl: parseFloat(e.target.value) || 0 })}
-                    className="w-full h-9 px-3 font-mono tabular-nums text-sm bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label htmlFor="target-input" className="text-xs font-medium text-muted-foreground">
-                    Målvärde (Target)
-                  </label>
-                  <input
-                    id="target-input"
-                    type="number"
-                    step="any"
-                    value={activeSpec.target}
-                    onChange={(e) => updateActiveSpec({ target: parseFloat(e.target.value) || 0 })}
-                    className="w-full h-9 px-3 font-mono tabular-nums text-sm bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label htmlFor="usl-input" className="text-xs font-medium text-muted-foreground">
-                    USL (Övre gräns)
-                  </label>
-                  <input
-                    id="usl-input"
-                    type="number"
-                    step="any"
-                    value={activeSpec.usl}
-                    onChange={(e) => updateActiveSpec({ usl: parseFloat(e.target.value) || 0 })}
-                    className="w-full h-9 px-3 font-mono tabular-nums text-sm bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-              </div>
-
-              {/* Compact Article / Tolerance Presets Row */}
-              <div className="pt-3 border-t border-border flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Bookmark className="w-3.5 h-3.5 text-muted-foreground" />
-                  <label htmlFor="article-preset-select" className="font-medium text-muted-foreground">
-                    Artikelmall (toleranser):
-                  </label>
-                  <select
-                    id="article-preset-select"
-                    value={selectedPresetId}
-                    onChange={(e) => handleApplyPreset(e.target.value)}
-                    className="h-8 px-2.5 text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  >
-                    <option value="">Välj sparad artikelmall...</option>
-                    {articlePresets.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                  {selectedPresetId && (
-                    <button
-                      type="button"
-                      onClick={handleDeleteSelectedPreset}
-                      title="Ta bort vald artikelmall"
-                      className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-600 hover:bg-muted transition-colors cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-
-                {isSavingPreset ? (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={newPresetName}
-                      onChange={(e) => setNewPresetName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSaveCurrentPreset();
-                        if (e.key === 'Escape') setIsSavingPreset(false);
-                      }}
-                      placeholder="T.ex. Art. 55210 — Axel Ø12"
-                      className="h-8 w-52 px-2.5 text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                      autoFocus
-                    />
-                    <Button variant="primary" size="sm" onClick={handleSaveCurrentPreset}>
-                      <Check className="w-3.5 h-3.5" />
-                      Spara
-                    </Button>
+                  {/* Compact Tools Popover for secondary demo actions */}
+                  <div className="relative">
                     <Button
-                      variant="ghost"
+                      variant={isStreaming ? 'danger' : 'outline'}
                       size="icon"
-                      onClick={() => setIsSavingPreset(false)}
-                      aria-label="Avbryt"
+                      onClick={() => setIsToolsMenuOpen((prev) => !prev)}
+                      title="Fler verktyg (Demoström & Exempeldata)"
+                      aria-label="Fler verktyg"
                     >
-                      <X className="w-3.5 h-3.5" />
+                      <MoreHorizontal className="w-4 h-4" />
                     </Button>
+
+                    {isToolsMenuOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-40"
+                          onClick={() => setIsToolsMenuOpen(false)}
+                        />
+                        <div className="absolute right-0 mt-1.5 w-52 rounded-xl border border-border bg-card p-1.5 shadow-xl z-50 space-y-0.5 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsToolsMenuOpen(false);
+                              handleToggleStream();
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left hover:bg-muted text-foreground transition-colors cursor-pointer"
+                          >
+                            {isStreaming ? (
+                              <Pause className="w-3.5 h-3.5 text-rose-600" />
+                            ) : (
+                              <Play className="w-3.5 h-3.5 text-primary" />
+                            )}
+                            <span>{isStreaming ? 'Stoppa demoström' : 'Starta demoström'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsToolsMenuOpen(false);
+                              handleResetToSample();
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left hover:bg-muted text-foreground transition-colors cursor-pointer"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span>Återställ CNC-exempeldata</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewPresetName(datasetName);
-                      setIsSavingPreset(true);
-                    }}
-                    className="text-xs font-medium text-primary hover:underline cursor-pointer"
-                  >
-                    + Spara nuvarande toleranser som artikelmall
-                  </button>
-                )}
+                </div>
+              </div>
+
+              {/* Unified Precision Metrology Bar: Metric + Tolerances + Article Preset */}
+              <div className="px-5 py-3 border-t border-border bg-muted/30 rounded-b-xl flex flex-col xl:flex-row xl:items-end justify-between gap-3.5">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 flex-1">
+                  <div className="col-span-2 space-y-1">
+                    <label
+                      htmlFor="metric-select"
+                      className="text-[11px] font-medium text-muted-foreground block"
+                    >
+                      Analyserad kolumn
+                    </label>
+                    <select
+                      id="metric-select"
+                      value={selectedMetric}
+                      onChange={(e) => setSelectedMetric(e.target.value)}
+                      className="w-full h-8.5 px-2.5 text-xs font-semibold bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      {columns.map((col) => (
+                        <option key={col} value={col}>
+                          {col}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="lsl-input"
+                      className="text-[11px] font-medium text-muted-foreground block"
+                    >
+                      LSL (Nedre)
+                    </label>
+                    <input
+                      id="lsl-input"
+                      type="number"
+                      step="any"
+                      value={activeSpec.lsl}
+                      onChange={(e) => updateActiveSpec({ lsl: parseFloat(e.target.value) || 0 })}
+                      className="w-full h-8.5 px-2.5 font-mono tabular-nums text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="target-input"
+                      className="text-[11px] font-medium text-muted-foreground block"
+                    >
+                      Målvärde
+                    </label>
+                    <input
+                      id="target-input"
+                      type="number"
+                      step="any"
+                      value={activeSpec.target}
+                      onChange={(e) =>
+                        updateActiveSpec({ target: parseFloat(e.target.value) || 0 })
+                      }
+                      className="w-full h-8.5 px-2.5 font-mono tabular-nums text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="usl-input"
+                      className="text-[11px] font-medium text-muted-foreground block"
+                    >
+                      USL (Övre)
+                    </label>
+                    <input
+                      id="usl-input"
+                      type="number"
+                      step="any"
+                      value={activeSpec.usl}
+                      onChange={(e) => updateActiveSpec({ usl: parseFloat(e.target.value) || 0 })}
+                      className="w-full h-8.5 px-2.5 font-mono tabular-nums text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                </div>
+
+                {/* Compact Article Presets Control */}
+                <div className="xl:pl-4 xl:border-l border-border flex flex-wrap items-center gap-2 text-xs shrink-0">
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="article-preset-select"
+                      className="text-[11px] font-medium text-muted-foreground flex items-center gap-1"
+                    >
+                      <Bookmark className="w-3 h-3" />
+                      Artikelmall
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      {isSavingPreset ? (
+                        <>
+                          <input
+                            type="text"
+                            value={newPresetName}
+                            onChange={(e) => setNewPresetName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveCurrentPreset();
+                              if (e.key === 'Escape') setIsSavingPreset(false);
+                            }}
+                            placeholder="T.ex. Art. 55210 — Axel"
+                            className="h-8.5 w-44 px-2.5 text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                            autoFocus
+                          />
+                          <Button variant="primary" size="sm" onClick={handleSaveCurrentPreset}>
+                            <Check className="w-3.5 h-3.5" />
+                            Spara
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setIsSavingPreset(false)}
+                            aria-label="Avbryt"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <select
+                            id="article-preset-select"
+                            value={selectedPresetId}
+                            onChange={(e) => handleApplyPreset(e.target.value)}
+                            className="h-8.5 px-2.5 text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary max-w-[180px]"
+                          >
+                            <option value="">Välj sparad mall...</option>
+                            {articlePresets.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                              </option>
+                            ))}
+                          </select>
+                          {selectedPresetId && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={handleDeleteSelectedPreset}
+                              title="Ta bort vald artikelmall"
+                              aria-label="Ta bort vald artikelmall"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-rose-600" />
+                            </Button>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setNewPresetName(datasetName);
+                              setIsSavingPreset(true);
+                            }}
+                          >
+                            Spara mall
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </Card>
           )}

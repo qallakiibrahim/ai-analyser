@@ -159,12 +159,19 @@ export function DistributionAndTrend({
     );
   };
 
-  const diagColor =
+  const diagToneText =
     diagnosis.level === 'critical'
-      ? 'text-rose-700 dark:text-rose-400 border-rose-500/30 bg-rose-500/[0.04]'
+      ? 'text-rose-700 dark:text-rose-400'
       : diagnosis.level === 'warning'
-      ? 'text-amber-800 dark:text-amber-300 border-amber-500/30 bg-amber-500/[0.04]'
-      : 'text-emerald-800 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/[0.04]';
+      ? 'text-amber-700 dark:text-amber-400'
+      : 'text-emerald-700 dark:text-emerald-400';
+
+  const diagHeaderTint =
+    diagnosis.level === 'critical'
+      ? 'bg-rose-500/[0.06] border-rose-500/20'
+      : diagnosis.level === 'warning'
+      ? 'bg-amber-500/[0.06] border-amber-500/20'
+      : 'bg-emerald-500/[0.06] border-emerald-500/20';
 
   const DiagIcon =
     diagnosis.level === 'critical'
@@ -277,7 +284,12 @@ export function DistributionAndTrend({
                   bottom: showDistXAxis && distXAxisLabel ? 20 : 8,
                 }}
               >
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  vertical={false}
+                  stroke="var(--border)"
+                  strokeOpacity={0.75}
+                />
                 <XAxis
                   dataKey="midpoint"
                   type="number"
@@ -285,6 +297,7 @@ export function DistributionAndTrend({
                   domain={['dataMin', 'dataMax']}
                   stroke="var(--muted-foreground)"
                   fontSize={11}
+                  tick={{ fontFamily: 'var(--font-mono)', fontSize: 10.5 }}
                   tickFormatter={(v) => Number(v).toFixed(2)}
                   label={
                     showDistXAxis && distXAxisLabel
@@ -302,6 +315,7 @@ export function DistributionAndTrend({
                   hide={!showDistYAxis}
                   stroke="var(--muted-foreground)"
                   fontSize={11}
+                  tick={{ fontFamily: 'var(--font-mono)', fontSize: 10.5 }}
                   width={44}
                   allowDecimals={false}
                   label={
@@ -376,44 +390,47 @@ export function DistributionAndTrend({
         </Card>
 
         {/* Dynamic Process Diagnosis Card */}
-        <Card
-          padding="none"
-          className={cn('p-5 sm:p-6 flex flex-col justify-between gap-5', diagColor)}
-        >
-          <div className="space-y-4">
-            <div className="flex items-start gap-3">
-              <DiagIcon className="w-5 h-5 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-xs font-semibold uppercase tracking-wide opacity-80">
+        <Card padding="none" className="flex flex-col justify-between">
+          <div className="flex-1 flex flex-col">
+            <div className={cn('px-5 py-4 border-b flex items-start gap-3', diagHeaderTint)}>
+              <DiagIcon className={cn('w-4 h-4 shrink-0 mt-0.5', diagToneText)} />
+              <div className="space-y-0.5">
+                <p className={cn('text-xs font-semibold', diagToneText)}>
                   Automatisk processbedömning
                 </p>
-                <h3 className="text-base font-semibold text-foreground leading-snug">
+                <h3 className="text-sm font-semibold text-foreground leading-snug">
                   {diagnosis.headline}
                 </h3>
               </div>
             </div>
 
-            <p className="text-sm text-muted-foreground leading-relaxed">{diagnosis.summary}</p>
+            <div className="p-5 space-y-4 flex-1">
+              <p className="text-xs sm:text-[13px] text-muted-foreground leading-relaxed">
+                {diagnosis.summary}
+              </p>
 
-            <ul className="space-y-2 text-xs text-foreground/90 list-disc pl-4">
-              {diagnosis.findings.map((finding, idx) => (
-                <li key={idx} className="leading-relaxed">
-                  {finding}
-                </li>
-              ))}
-            </ul>
+              <ul className="space-y-2 text-xs text-foreground/90 list-disc pl-4">
+                {diagnosis.findings.map((finding, idx) => (
+                  <li key={idx} className="leading-relaxed">
+                    {finding}
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
 
-          <Button
-            variant="primary"
-            size="sm"
-            className="w-full"
-            onClick={onRunAiAnalysis}
-            isLoading={isAnalyzing}
-          >
-            <Brain className="w-4 h-4" />
-            {isAnalyzing ? 'Kör AI-analys...' : 'Fördjupad AI-rotorsaksanalys'}
-          </Button>
+          <div className="px-5 py-4 border-t border-border bg-muted/25">
+            <Button
+              variant="primary"
+              size="sm"
+              className="w-full"
+              onClick={onRunAiAnalysis}
+              isLoading={isAnalyzing}
+            >
+              <Brain className="w-4 h-4" />
+              {isAnalyzing ? 'Kör AI-analys...' : 'Fördjupad AI-rotorsaksanalys'}
+            </Button>
+          </div>
         </Card>
       </div>
 
@@ -562,7 +579,12 @@ export function DistributionAndTrend({
                 }}
                 onMouseUp={handleTrendMouseUp}
               >
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  vertical={false}
+                  stroke="var(--border)"
+                  strokeOpacity={0.75}
+                />
                 <XAxis
                   dataKey="rowIndex"
                   type="number"
@@ -570,6 +592,7 @@ export function DistributionAndTrend({
                   domain={['dataMin', 'dataMax']}
                   stroke="var(--muted-foreground)"
                   fontSize={11}
+                  tick={{ fontFamily: 'var(--font-mono)', fontSize: 10.5 }}
                   tickFormatter={(rowIdx) => trendLabelByRow.get(Number(rowIdx)) || `#${rowIdx}`}
                   label={
                     showTrendXAxis && trendXAxisLabel
@@ -588,6 +611,7 @@ export function DistributionAndTrend({
                   domain={trendYDomain}
                   stroke="var(--muted-foreground)"
                   fontSize={11}
+                  tick={{ fontFamily: 'var(--font-mono)', fontSize: 10.5 }}
                   width={48}
                   label={
                     showTrendYAxis && trendYAxisLabel

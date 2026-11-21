@@ -18,31 +18,39 @@
 
 @layer base {
   :root {
-    --background: #f8fafc;
-    --foreground: #0f172a;
+    --background: #f4f6f9;
+    --foreground: #0b1220;
     --card: #ffffff;
-    --card-foreground: #0f172a;
-    --border: #e2e8f0;
-    --primary: #1d4ed8;
+    --card-foreground: #0b1220;
+    --border: #dce2ea;
+    --primary: #1e40af;
     --primary-foreground: #ffffff;
-    --muted: #f1f5f9;
-    --muted-foreground: #475569;
+    --muted: #eef2f6;
+    --muted-foreground: #4b586e;
   }
 
   .dark {
-    --background: #0b1120;
+    --background: #070b14;
     --foreground: #f1f5f9;
-    --card: #111a2e;
+    --card: #0e1525;
     --card-foreground: #f1f5f9;
-    --border: #23304a;
+    --border: #1e2a42;
     --primary: #3b82f6;
     --primary-foreground: #ffffff;
-    --muted: #162238;
+    --muted: #141e33;
     --muted-foreground: #94a3b8;
   }
 
   body {
-    @apply bg-background text-foreground font-sans antialiased transition-colors duration-200;
+    @apply bg-background text-foreground font-sans antialiased transition-colors duration-200 selection:bg-primary/15 selection:text-primary;
+  }
+
+  .dark body {
+    letter-spacing: 0.008em;
+  }
+
+  h1, h2, h3 {
+    text-wrap: balance;
   }
 
   .tabular-nums {

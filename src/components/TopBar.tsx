@@ -41,19 +41,35 @@ export function TopBar({
   const [accountOpen, setAccountOpen] = useState(false);
 
   return (
-    <header className="no-print sticky top-0 z-50 bg-card border-b border-border">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-8">
-        {/* Zone 1: Single-line Brand Wordmark */}
+    <header className="no-print sticky top-0 z-50 bg-card/90 backdrop-blur-md border-b border-border/90">
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-6">
+        {/* Zone 1: Brand Mark + Single-line Wordmark */}
         <button
           type="button"
           onClick={() => onSelectTab('dashboard')}
-          className="text-base font-bold tracking-tight text-foreground whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-md"
+          className="inline-flex items-center gap-2.5 text-[15px] font-bold tracking-tight text-foreground whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-md"
         >
-          Production AI Analyst
+          <span
+            aria-hidden="true"
+            className="w-7 h-7 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shadow-[0_1px_2px_rgba(15,23,42,0.18)]"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <line x1="1.5" y1="3.5" x2="14.5" y2="3.5" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1.2" strokeDasharray="2 1.5" />
+              <line x1="1.5" y1="12.5" x2="14.5" y2="12.5" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1.2" strokeDasharray="2 1.5" />
+              <polyline
+                points="2,9.5 5,6.2 8.2,10.2 11.2,5.5 14,7.8"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span>Production AI Analyst</span>
         </button>
 
         {/* Zone 2: Clean Single-Line Nav Links */}
-        <nav aria-label="Huvudnavigation" className="hidden lg:flex items-center gap-5">
+        <nav aria-label="Huvudnavigation" className="hidden lg:flex items-center gap-1">
           {NAV_ITEMS.map((item) => {
             const isActive = activeTab === item.id;
             return (
@@ -62,22 +78,22 @@ export function TopBar({
                 type="button"
                 onClick={() => onSelectTab(item.id)}
                 className={cn(
-                  'relative py-5 text-sm font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer',
+                  'relative h-14 px-3 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer',
                   isActive
-                    ? 'text-foreground'
+                    ? 'text-foreground font-semibold'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 {item.label}
                 {isActive && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                  <span className="absolute bottom-0 left-2.5 right-2.5 h-[2px] rounded-full bg-primary" />
                 )}
               </button>
             );
           })}
         </nav>
 
-        {/* Zone 3: Primary CTA + Utility Menu */}
+        {/* Zone 3: Primary CTA + Utility Controls */}
         <div className="flex items-center gap-2 shrink-0">
           <Button
             variant="primary"
@@ -85,9 +101,11 @@ export function TopBar({
             onClick={onOpenImport}
             className="hidden sm:inline-flex"
           >
-            <Upload className="w-4 h-4" />
+            <Upload className="w-3.5 h-3.5" />
             Importera fil
           </Button>
+
+          <div className="hidden sm:block h-5 w-px bg-border mx-0.5" aria-hidden="true" />
 
           <Button
             variant="ghost"
@@ -107,6 +125,7 @@ export function TopBar({
               onClick={() => setAccountOpen((prev) => !prev)}
               title={user ? user.email || 'Konto' : 'Logga in'}
               aria-label={user ? 'Kontomeny' : 'Logga in med Google'}
+              className={cn(user && 'border-primary/40 text-primary')}
             >
               <UserIcon className="w-4 h-4" />
             </Button>
@@ -117,7 +136,7 @@ export function TopBar({
                   className="fixed inset-0 z-40"
                   onClick={() => setAccountOpen(false)}
                 />
-                <div className="absolute right-0 mt-2 w-64 rounded-xl border border-border bg-card p-4 shadow-lg z-50 space-y-3">
+                <div className="absolute right-0 mt-2 w-64 rounded-xl border border-border bg-card p-4 shadow-xl z-50 space-y-3">
                   {user ? (
                     <>
                       <div className="space-y-0.5 border-b border-border pb-3">
