@@ -554,9 +554,14 @@ export default function App() {
         byRule[a.ruleCode] = (byRule[a.ruleCode] || 0) + 1;
       }
 
+      setAiAnalysis('');
+
       const response = await fetch('/api/analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream, application/json',
+        },
         body: JSON.stringify({
           datasetName,
           metric: selectedMetric,
@@ -579,18 +584,102 @@ export default function App() {
         }),
       });
 
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error || 'Servern svarade med ett fel.');
-      }
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+      let finalReport = '';
+      let finalStatus: 'RÖD' | 'GUL' | 'GRÖN' = 'GRÖN';
 
-      setAiAnalysis(payload.report);
+      if (response.ok && contentType.includes('text/event-stream') && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let streamedText = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() ?? '';
+
+          for (const rawEvent of events) {
+            const dataLines = rawEvent
+              .split('\n')
+              .filter((line) => line.startsWith('data:'))
+              .map((line) => line.slice(5).trim());
+            if (dataLines.length === 0) continue;
+
+            let eventPayload: {
+              chunk?: string;
+              done?: boolean;
+              report?: string;
+              status?: 'RÖD' | 'GUL' | 'GRÖN';
+              error?: string;
+            };
+            try {
+              eventPayload = JSON.parse(dataLines.join('\n'));
+            } catch {
+              continue;
+            }
+
+            if (eventPayload.error) {
+              throw new Error(eventPayload.error);
+            }
+            if (eventPayload.chunk) {
+              streamedText += eventPayload.chunk;
+              setAiAnalysis(streamedText);
+            }
+            if (eventPayload.done) {
+              finalReport = eventPayload.report || streamedText;
+              finalStatus = eventPayload.status || 'GRÖN';
+            }
+          }
+        }
+
+        if (!finalReport) {
+          finalReport = streamedText.trim();
+        }
+        if (!finalReport) {
+          throw new Error('AI-servern avslutade utan rapportdata. Försök igen.');
+        }
+        setAiAnalysis(finalReport);
+      } else {
+        const rawText = await response.text();
+        let payload: { report?: string; status?: 'RÖD' | 'GUL' | 'GRÖN'; error?: string } | null = null;
+        try {
+          payload = rawText ? JSON.parse(rawText) : null;
+        } catch {
+          payload = null;
+        }
+
+        if (!response.ok) {
+          if (payload?.error) {
+            throw new Error(payload.error);
+          }
+          if (response.status === 504 || response.status === 408) {
+            throw new Error('Analysen tog för lång tid (timeout). Försök igen — servern svarade inte i tid.');
+          }
+          if (response.status === 502 || response.status === 503) {
+            throw new Error('AI-servern är tillfälligt otillgänglig. Försök igen om ett par sekunder.');
+          }
+          throw new Error(`Servern svarade med HTTP ${response.status} i oväntat format. Ladda om sidan och försök igen.`);
+        }
+
+        if (!payload || typeof payload.report !== 'string') {
+          throw new Error(
+            'API-servern svarade med HTML i stället för analysdata. Kontrollera att backend-servern körs och försök igen.'
+          );
+        }
+
+        finalReport = payload.report;
+        finalStatus = payload.status || 'GRÖN';
+        setAiAnalysis(finalReport);
+      }
 
       if (user) {
         try {
           await saveUserReport({
-            content: payload.report,
-            status: payload.status || 'GRÖN',
+            content: finalReport,
+            status: finalStatus,
             metric: selectedMetric,
             datasetName,
             sampleCount: activeRows.length,

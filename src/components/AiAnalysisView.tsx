@@ -74,13 +74,13 @@ export function AiAnalysisView({
             </div>
           )}
 
-          {isAnalyzing ? (
+          {isAnalyzing && !aiAnalysis ? (
             <div className="py-12 space-y-6">
               <div className="flex flex-col items-center text-center gap-3">
                 <RefreshCw className="w-8 h-8 text-primary animate-spin" />
                 <div className="space-y-1">
                   <p className="text-base font-semibold text-foreground">
-                    Kör trestegs SPC- och rotorsaksanalys på servern
+                    Kör SPC- och rotorsaksanalys på servern
                   </p>
                   <p className="text-xs text-muted-foreground max-w-md">
                     Utvärderar fullständig kapabilitetsprofil (I-MR, Cpk/Ppk, D&apos;Agostino-Pearson,
@@ -114,8 +114,16 @@ export function AiAnalysisView({
               </Button>
             </div>
           ) : (
-            <div className="prose max-w-none text-sm sm:text-base">
-              <Markdown>{aiAnalysis}</Markdown>
+            <div className="space-y-4">
+              {isAnalyzing && (
+                <div className="no-print flex items-center gap-2 text-xs text-primary font-medium pb-2 border-b border-border">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  Skriver rapport i realtid...
+                </div>
+              )}
+              <div className="prose max-w-none text-sm sm:text-base">
+                <Markdown>{aiAnalysis}</Markdown>
+              </div>
             </div>
           )}
         </div>
