@@ -1274,6 +1274,12 @@ export default function App() {
         stats={stats}
         anomaliesByRow={anomaliesByRow}
         excludedPoints={activeExclusions}
+        specsByColumn={specsByColumn}
+        excludedByMetric={excludedByMetric}
+        stageSnapshot={stageSnapshot}
+        correlations={correlations}
+        regressionSnapshot={regressionSnapshot}
+        doeSnapshot={doeSnapshot}
         datasetName={datasetName}
         onNotify={notify}
       />
