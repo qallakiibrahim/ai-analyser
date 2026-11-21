@@ -137,6 +137,14 @@ export function codedToActual(codedVal: number, low: number, high: number): numb
   return Number(raw.toFixed(dec));
 }
 
+export function actualToCoded(actualVal: number, low: number, high: number): number {
+  const center = (low + high) / 2;
+  const half = (high - low) / 2;
+  if (Math.abs(half) < 1e-12) return 0;
+  const raw = (actualVal - center) / half;
+  return Number(raw.toFixed(4));
+}
+
 export function generateDoeDesign(
   design: DoeDesignType,
   factors: DoeFactor[],
@@ -576,13 +584,13 @@ export function analyzeDoe(
     };
   });
 
-  // Main Effects Plot data (average Y at coded -1 vs +1)
+  // Main Effects Plot data (average Y on low vs high side; supports both exact ±1 and edited actuals)
   const mainEffectsPlot: MainEffectPlotSeries[] = activeFactors.map((f) => {
     const lowVals = cornerRuns
-      .filter((r) => r.coded[f.code] === -1)
+      .filter((r) => (r.coded[f.code] ?? 0) <= -0.25)
       .map((r) => r.response as number);
     const highVals = cornerRuns
-      .filter((r) => r.coded[f.code] === 1)
+      .filter((r) => (r.coded[f.code] ?? 0) >= 0.25)
       .map((r) => r.response as number);
     const lowMean =
       lowVals.length > 0 ? lowVals.reduce((a, b) => a + b, 0) / lowVals.length : cornerMean;
@@ -759,9 +767,13 @@ export function buildInteractionPlotData(
   );
 
   const avgFor = (aCodeVal: number, bCodeVal: number): number | null => {
-    const matches = completedCorners.filter(
-      (r) => r.coded[factorA.code] === aCodeVal && r.coded[factorB.code] === bCodeVal
-    );
+    const matches = completedCorners.filter((r) => {
+      const ca = r.coded[factorA.code] ?? 0;
+      const cb = r.coded[factorB.code] ?? 0;
+      const matchA = aCodeVal < 0 ? ca <= -0.25 : ca >= 0.25;
+      const matchB = bCodeVal < 0 ? cb <= -0.25 : cb >= 0.25;
+      return matchA && matchB;
+    });
     if (matches.length === 0) return null;
     return matches.reduce((s, r) => s + (r.response as number), 0) / matches.length;
   };

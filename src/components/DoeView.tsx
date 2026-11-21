@@ -27,12 +27,15 @@ import {
   Copy,
   Check,
   Sparkles,
+  Plus,
+  X,
 } from 'lucide-react';
 import {
   DoeDesignType,
   DoeFactor,
   DoeGoal,
   DoeRun,
+  actualToCoded,
   analyzeDoe,
   buildInteractionPlotData,
   codedToActual,
@@ -69,6 +72,91 @@ function parseCellNumber(raw: unknown): number | null {
   if (!trimmed) return null;
   const num = Number(trimmed);
   return Number.isFinite(num) ? num : null;
+}
+
+function formatCodedBadge(c: number): { label: string; isCustom: boolean } {
+  if (Math.abs(c - 1) < 1e-3) return { label: '+1', isCustom: false };
+  if (Math.abs(c + 1) < 1e-3) return { label: '−1', isCustom: false };
+  if (Math.abs(c) < 1e-3) return { label: '0', isCustom: false };
+  const sign = c > 0 ? '+' : '−';
+  return { label: `${sign}${Math.abs(c).toFixed(2)}`, isCustom: true };
+}
+
+interface DecimalInputProps {
+  value: number | null;
+  onChangeValue: (val: number | null) => void;
+  allowEmpty?: boolean;
+  placeholder?: string;
+  className?: string;
+  ariaLabel?: string;
+}
+
+function DecimalInput({
+  value,
+  onChangeValue,
+  allowEmpty = false,
+  placeholder,
+  className,
+  ariaLabel,
+}: DecimalInputProps) {
+  const [text, setText] = useState<string>(value === null ? '' : String(value));
+  const [focused, setFocused] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!focused) {
+      setText(value === null ? '' : String(value));
+    }
+  }, [value, focused]);
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      aria-label={ariaLabel}
+      value={text}
+      placeholder={placeholder}
+      onFocus={(e) => {
+        setFocused(true);
+        e.currentTarget.select();
+      }}
+      onBlur={() => {
+        setFocused(false);
+        const normalized = text.trim().replace(',', '.');
+        if (normalized === '' || normalized === '-' || normalized === '.' || normalized === '-.') {
+          if (allowEmpty) {
+            onChangeValue(null);
+            setText('');
+          } else {
+            setText(value === null ? '' : String(value));
+          }
+          return;
+        }
+        const parsed = Number(normalized);
+        if (Number.isFinite(parsed)) {
+          onChangeValue(parsed);
+          setText(String(parsed));
+        } else {
+          setText(value === null ? '' : String(value));
+        }
+      }}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (!/^-?\d*[.,]?\d*$/.test(raw)) return;
+        setText(raw);
+        const normalized = raw.trim().replace(',', '.');
+        if (normalized === '') {
+          if (allowEmpty) onChangeValue(null);
+          return;
+        }
+        if (normalized === '-' || normalized === '.' || normalized === '-.') return;
+        const parsed = Number(normalized);
+        if (Number.isFinite(parsed)) {
+          onChangeValue(parsed);
+        }
+      }}
+      className={className}
+    />
+  );
 }
 
 export function DoeView({ onNotify }: DoeViewProps) {
@@ -147,27 +235,87 @@ export function DoeView({ onNotify }: DoeViewProps) {
 
   // Handlers
   const handleUpdateFactor = (code: string, patch: Partial<DoeFactor>) => {
-    setFactors((prev) => {
-      const nextFactors = prev.map((f) => (f.code === code ? { ...f, ...patch } : f));
-      const updatedFactor = nextFactors.find((f) => f.code === code);
-      if (updatedFactor && (patch.low !== undefined || patch.high !== undefined)) {
-        // Recalculate actual run levels live without wiping user's entered Y measurements
-        setRuns((prevRuns) =>
-          prevRuns.map((r) => ({
-            ...r,
-            actual: {
-              ...r.actual,
-              [code]: codedToActual(
-                r.coded[code] ?? 0,
-                updatedFactor.low,
-                updatedFactor.high
-              ),
-            },
-          }))
+    const nextFactors = factors.map((f) => (f.code === code ? { ...f, ...patch } : f));
+    const updatedFactor = nextFactors.find((f) => f.code === code);
+    setFactors(nextFactors);
+
+    if (updatedFactor && (patch.low !== undefined || patch.high !== undefined)) {
+      // Recalculate actual run levels live without wiping user's entered Y measurements
+      setRuns((prevRuns) =>
+        prevRuns.map((r) => ({
+          ...r,
+          actual: {
+            ...r.actual,
+            [code]: codedToActual(
+              r.coded[code] ?? 0,
+              updatedFactor.low,
+              updatedFactor.high
+            ),
+          },
+        }))
+      );
+    }
+  };
+
+  const handleUpdateRunFactor = (
+    runId: string,
+    factorCode: string,
+    actualVal: number | null
+  ) => {
+    if (actualVal === null || !Number.isFinite(actualVal)) return;
+    const factor = factors.find((f) => f.code === factorCode);
+    if (!factor) return;
+    const nextCodedVal = actualToCoded(actualVal, factor.low, factor.high);
+
+    setRuns((prev) =>
+      prev.map((r) => {
+        if (r.id !== runId) return r;
+        const nextCoded = { ...r.coded, [factorCode]: nextCodedVal };
+        const isAllCenter = activeFactors.every(
+          (af) => Math.abs(nextCoded[af.code] ?? 0) < 0.05
         );
-      }
-      return nextFactors;
-    });
+        return {
+          ...r,
+          coded: nextCoded,
+          actual: { ...r.actual, [factorCode]: actualVal },
+          pointType: isAllCenter ? 'center' : 'corner',
+        };
+      })
+    );
+  };
+
+  const handleAddCustomRun = () => {
+    const nextStd = runs.reduce((m, r) => Math.max(m, r.stdOrder), 0) + 1;
+    const nextRunOrder = runs.reduce((m, r) => Math.max(m, r.runOrder), 0) + 1;
+    const coded: Record<string, number> = {};
+    const actual: Record<string, number> = {};
+    for (const f of activeFactors) {
+      coded[f.code] = 0;
+      actual[f.code] = codedToActual(0, f.low, f.high);
+    }
+    const newRun: DoeRun = {
+      id: `run-custom-${Date.now()}-${nextStd}`,
+      stdOrder: nextStd,
+      runOrder: nextRunOrder,
+      replicate: 1,
+      pointType: 'center',
+      coded,
+      actual,
+      response: null,
+    };
+    setRuns((prev) => [...prev, newRun]);
+    onNotify('info', `Lade till körning #${nextRunOrder}. Redigera faktorvärden och Y direkt i raden.`);
+  };
+
+  const handleDeleteRun = (runId: string) => {
+    if (runs.length <= activeFactors.length + 1) {
+      onNotify(
+        'info',
+        `Behåll minst ${activeFactors.length + 1} körningar för att kunna beräkna DOE-modellen.`
+      );
+      return;
+    }
+    setRuns((prev) => prev.filter((r) => r.id !== runId));
   };
 
   const handleRebuildDesign = (
@@ -202,9 +350,7 @@ export function DoeView({ onNotify }: DoeViewProps) {
     setRuns((prev) => [...prev].sort((a, b) => a.stdOrder - b.stdOrder));
   };
 
-  const handleUpdateResponse = (runId: string, raw: string) => {
-    const trimmed = raw.trim().replace(',', '.');
-    const num = trimmed === '' ? null : Number(trimmed);
+  const handleUpdateResponse = (runId: string, num: number | null) => {
     setRuns((prev) =>
       prev.map((r) =>
         r.id === runId
@@ -304,7 +450,27 @@ export function DoeView({ onNotify }: DoeViewProps) {
         const stdCol = headers.find((h) => h.toLowerCase().includes('std'));
         const runCol = headers.find((h) => h.toLowerCase().includes('kör'));
 
-        let matched = 0;
+        // Match factor columns by name or code so imported factor values also update runs
+        const factorColMap: Record<string, string> = {};
+        for (const f of activeFactors) {
+          const fname = f.name.trim().toLowerCase();
+          const fcode = f.code.toLowerCase();
+          const matchedHeader = headers.find((h) => {
+            if (h === responseCol || h === stdCol || h === runCol) return false;
+            const hl = h.trim().toLowerCase();
+            return (
+              hl === fcode ||
+              hl.startsWith(`${fcode}:`) ||
+              (fname.length > 0 && hl.includes(fname))
+            );
+          });
+          if (matchedHeader) {
+            factorColMap[f.code] = matchedHeader;
+          }
+        }
+
+        let matchedY = 0;
+        let matchedFactors = 0;
         const nextRuns = runs.map((r, idx) => {
           let sourceRow: Record<string, unknown> | undefined;
           if (stdCol) {
@@ -321,18 +487,45 @@ export function DoeView({ onNotify }: DoeViewProps) {
             sourceRow = importedRows[idx];
           }
           if (!sourceRow) return r;
-          const val = parseCellNumber(sourceRow[responseCol]);
-          if (val !== null) {
-            matched++;
-            return { ...r, response: val };
+
+          const nextActual = { ...r.actual };
+          const nextCoded = { ...r.coded };
+          let rowFactorUpdated = false;
+          for (const f of activeFactors) {
+            const col = factorColMap[f.code];
+            if (!col) continue;
+            const fVal = parseCellNumber(sourceRow[col]);
+            if (fVal !== null) {
+              nextActual[f.code] = fVal;
+              nextCoded[f.code] = actualToCoded(fVal, f.low, f.high);
+              rowFactorUpdated = true;
+            }
           }
-          return r;
+          if (rowFactorUpdated) matchedFactors++;
+
+          const yVal = parseCellNumber(sourceRow[responseCol]);
+          if (yVal !== null) matchedY++;
+
+          const isAllCenter = activeFactors.every(
+            (af) => Math.abs(nextCoded[af.code] ?? 0) < 0.05
+          );
+
+          return {
+            ...r,
+            actual: nextActual,
+            coded: nextCoded,
+            pointType: rowFactorUpdated ? (isAllCenter ? 'center' : 'corner') : r.pointType,
+            response: yVal !== null ? yVal : r.response,
+          };
         });
 
         setRuns(nextRuns);
+        const factorColsFound = Object.keys(factorColMap).length;
         onNotify(
           'success',
-          `Läste in ${matched} mätvärden från kolumnen "${responseCol}".`
+          factorColsFound > 0
+            ? `Läste in ${matchedY} Y-värden ("${responseCol}") och ${factorColsFound} faktorkolumner (${matchedFactors} rader).`
+            : `Läste in ${matchedY} mätvärden från kolumnen "${responseCol}".`
         );
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -478,11 +671,17 @@ export function DoeView({ onNotify }: DoeViewProps) {
 
         {/* Factor Levels Editor */}
         <div className="pt-4 border-t border-border space-y-2.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-foreground">
-              Steg 1 — Faktorinställningar (Låg = −1, Hög = +1)
-            </span>
-            <span className="text-muted-foreground font-mono tabular-nums">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs">
+            <div>
+              <span className="font-semibold text-foreground">
+                Steg 1 — Faktorinställningar (Låg = −1, Hög = +1)
+              </span>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Ändra faktornamn, enhet och låg/hög nivå här för hela försöksplanen — eller skriv in
+                faktiska faktorvärden direkt per körning i Steg 2 nedan.
+              </p>
+            </div>
+            <span className="text-muted-foreground font-mono tabular-nums shrink-0">
               {activeFactors.length} aktiva faktorer · {runs.length} totala körningar
             </span>
           </div>
@@ -494,58 +693,75 @@ export function DoeView({ onNotify }: DoeViewProps) {
                   <th className="py-2 px-3 font-semibold w-14">Kod</th>
                   <th className="py-2 px-3 font-semibold">Faktornamn</th>
                   <th className="py-2 px-3 font-semibold w-28">Enhet</th>
-                  <th className="py-2 px-3 font-semibold w-32">Låg nivå (−1)</th>
-                  <th className="py-2 px-3 font-semibold w-32">Hög nivå (+1)</th>
+                  <th className="py-2 px-3 font-semibold w-36">Låg nivå (−1)</th>
+                  <th className="py-2 px-3 font-semibold w-36">Hög nivå (+1)</th>
                   <th className="py-2 px-3 font-semibold w-28 text-right">Centrum (0)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {activeFactors.map((f) => (
-                  <tr key={f.code}>
-                    <td className="py-2 px-3 font-mono font-bold text-primary">{f.code}</td>
-                    <td className="py-2 px-3">
-                      <input
-                        type="text"
-                        value={f.name}
-                        onChange={(e) => handleUpdateFactor(f.code, { name: e.target.value })}
-                        className="w-full h-8 px-2.5 text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
-                    </td>
-                    <td className="py-2 px-3">
-                      <input
-                        type="text"
-                        value={f.unit}
-                        onChange={(e) => handleUpdateFactor(f.code, { unit: e.target.value })}
-                        className="w-full h-8 px-2.5 text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
-                    </td>
-                    <td className="py-2 px-3">
-                      <input
-                        type="number"
-                        step="any"
-                        value={f.low}
-                        onChange={(e) =>
-                          handleUpdateFactor(f.code, { low: parseFloat(e.target.value) || 0 })
-                        }
-                        className="w-full h-8 px-2.5 font-mono tabular-nums text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
-                    </td>
-                    <td className="py-2 px-3">
-                      <input
-                        type="number"
-                        step="any"
-                        value={f.high}
-                        onChange={(e) =>
-                          handleUpdateFactor(f.code, { high: parseFloat(e.target.value) || 0 })
-                        }
-                        className="w-full h-8 px-2.5 font-mono tabular-nums text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono tabular-nums text-muted-foreground">
-                      {codedToActual(0, f.low, f.high)}
-                    </td>
-                  </tr>
-                ))}
+                {activeFactors.map((f) => {
+                  const sameBounds = Math.abs(f.high - f.low) < 1e-12;
+                  return (
+                    <tr key={f.code}>
+                      <td className="py-2 px-3 font-mono font-bold text-primary">{f.code}</td>
+                      <td className="py-2 px-3">
+                        <input
+                          type="text"
+                          aria-label={`Faktornamn ${f.code}`}
+                          value={f.name}
+                          placeholder={`Faktor ${f.code}`}
+                          onChange={(e) => handleUpdateFactor(f.code, { name: e.target.value })}
+                          className="w-full h-8 px-2.5 text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                      </td>
+                      <td className="py-2 px-3">
+                        <input
+                          type="text"
+                          aria-label={`Enhet ${f.code}`}
+                          value={f.unit}
+                          placeholder="t.ex. °C, mm"
+                          onChange={(e) => handleUpdateFactor(f.code, { unit: e.target.value })}
+                          className="w-full h-8 px-2.5 text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                      </td>
+                      <td className="py-2 px-3">
+                        <DecimalInput
+                          ariaLabel={`Låg nivå för ${f.name}`}
+                          value={f.low}
+                          onChangeValue={(val) => {
+                            if (val !== null) handleUpdateFactor(f.code, { low: val });
+                          }}
+                          className={cn(
+                            'w-full h-8 px-2.5 font-mono tabular-nums text-xs bg-card border rounded-md focus:outline-none focus:ring-2 focus:ring-primary',
+                            sameBounds ? 'border-amber-500' : 'border-border'
+                          )}
+                        />
+                      </td>
+                      <td className="py-2 px-3">
+                        <DecimalInput
+                          ariaLabel={`Hög nivå för ${f.name}`}
+                          value={f.high}
+                          onChangeValue={(val) => {
+                            if (val !== null) handleUpdateFactor(f.code, { high: val });
+                          }}
+                          className={cn(
+                            'w-full h-8 px-2.5 font-mono tabular-nums text-xs bg-card border rounded-md focus:outline-none focus:ring-2 focus:ring-primary',
+                            sameBounds ? 'border-amber-500' : 'border-border'
+                          )}
+                        />
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono tabular-nums text-muted-foreground">
+                        {sameBounds ? (
+                          <span className="text-amber-600 dark:text-amber-400 text-[11px] font-sans">
+                            Låg = Hög
+                          </span>
+                        ) : (
+                          codedToActual(0, f.low, f.high)
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -560,8 +776,8 @@ export function DoeView({ onNotify }: DoeViewProps) {
               Steg 2 — Körplan &amp; Uppmätta resultat ({completedCount} / {runs.length} ifyllda)
             </h3>
             <p className="text-xs text-muted-foreground">
-              Skriv in uppmätt {responseName} direkt i tabellen eller exportera körplanen till Excel
-              för verkstaden och importera tillbaka svaren.
+              Skriv in både faktiska faktorvärden (X) och uppmätt {responseName} (Y) direkt i
+              tabellen, eller exportera körplanen till Excel och importera tillbaka.
             </p>
           </div>
 
@@ -573,6 +789,10 @@ export function DoeView({ onNotify }: DoeViewProps) {
               onChange={handleImportResponses}
               className="hidden"
             />
+            <Button variant="outline" size="sm" onClick={handleAddCustomRun}>
+              <Plus className="w-3.5 h-3.5" />
+              Lägg till körning
+            </Button>
             <Button variant="outline" size="sm" onClick={handleRandomize}>
               <Shuffle className="w-3.5 h-3.5" />
               Slumpa ordning
@@ -590,7 +810,7 @@ export function DoeView({ onNotify }: DoeViewProps) {
               onClick={() => importFileRef.current?.click()}
             >
               <Upload className="w-3.5 h-3.5" />
-              Importera Y
+              Importera Excel/CSV
             </Button>
             <Button
               variant="ghost"
@@ -604,23 +824,24 @@ export function DoeView({ onNotify }: DoeViewProps) {
           </div>
         </div>
 
-        <div className="overflow-x-auto max-h-[380px] overflow-y-auto">
+        <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
           <table className="w-full text-xs text-left border-collapse">
             <thead className="sticky top-0 z-10 bg-muted border-b border-border text-muted-foreground">
               <tr>
-                <th className="py-2.5 px-3 font-semibold">Kör #</th>
-                <th className="py-2.5 px-3 font-semibold">Std #</th>
-                <th className="py-2.5 px-3 font-semibold">Typ</th>
+                <th className="py-2.5 px-3 font-semibold w-14">Kör #</th>
+                <th className="py-2.5 px-2.5 font-semibold w-14">Std #</th>
+                <th className="py-2.5 px-2.5 font-semibold w-24">Typ</th>
                 {activeFactors.map((f) => (
-                  <th key={f.code} className="py-2.5 px-3 font-semibold text-right">
+                  <th key={f.code} className="py-2.5 px-3 font-semibold text-right min-w-[140px]">
                     {f.code}: {f.name}
                     {f.unit ? ` (${f.unit})` : ''}
                   </th>
                 ))}
-                <th className="py-2.5 px-4 font-semibold text-right w-40">
+                <th className="py-2.5 px-3 font-semibold text-right w-36">
                   {responseName}
                   {responseUnit ? ` (${responseUnit})` : ''} (Y)
                 </th>
+                <th className="py-2.5 px-2 font-semibold w-9" aria-label="Ta bort rad" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border font-mono tabular-nums">
@@ -633,8 +854,8 @@ export function DoeView({ onNotify }: DoeViewProps) {
                   )}
                 >
                   <td className="py-2 px-3 font-semibold text-foreground">{r.runOrder}</td>
-                  <td className="py-2 px-3 text-muted-foreground">{r.stdOrder}</td>
-                  <td className="py-2 px-3 font-sans">
+                  <td className="py-2 px-2.5 text-muted-foreground">{r.stdOrder}</td>
+                  <td className="py-2 px-2.5 font-sans">
                     <span
                       className={cn(
                         'font-medium',
@@ -646,24 +867,51 @@ export function DoeView({ onNotify }: DoeViewProps) {
                   </td>
                   {activeFactors.map((f) => {
                     const c = r.coded[f.code] ?? 0;
+                    const badge = formatCodedBadge(c);
                     return (
-                      <td key={f.code} className="py-2 px-3 text-right text-foreground">
-                        <span>{r.actual[f.code]}</span>
-                        <span className="ml-1.5 text-[10px] text-muted-foreground">
-                          ({c > 0 ? '+1' : c < 0 ? '−1' : '0'})
-                        </span>
+                      <td key={f.code} className="py-1.5 px-3 text-right">
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          <DecimalInput
+                            ariaLabel={`${f.name} körning ${r.runOrder}`}
+                            value={r.actual[f.code] ?? 0}
+                            onChangeValue={(val) => handleUpdateRunFactor(r.id, f.code, val)}
+                            className="w-20 h-8 px-2 text-right font-mono tabular-nums text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                          />
+                          <span
+                            title="Kodad nivå (−1 = Låg, 0 = Centrum, +1 = Hög)"
+                            className={cn(
+                              'w-10 text-left text-[10px] tabular-nums',
+                              badge.isCustom
+                                ? 'text-primary font-semibold'
+                                : 'text-muted-foreground'
+                            )}
+                          >
+                            ({badge.label})
+                          </span>
+                        </div>
                       </td>
                     );
                   })}
-                  <td className="py-1.5 px-4 text-right">
-                    <input
-                      type="number"
-                      step="any"
-                      value={r.response ?? ''}
-                      onChange={(e) => handleUpdateResponse(r.id, e.target.value)}
+                  <td className="py-1.5 px-3 text-right">
+                    <DecimalInput
+                      ariaLabel={`${responseName} körning ${r.runOrder}`}
+                      value={r.response}
+                      allowEmpty
+                      onChangeValue={(val) => handleUpdateResponse(r.id, val)}
                       placeholder="Mätvärde..."
-                      className="w-28 h-8 px-2.5 text-right font-mono tabular-nums text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                      className="w-28 h-8 px-2.5 text-right font-mono tabular-nums text-xs bg-card border border-primary/40 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                     />
+                  </td>
+                  <td className="py-1.5 px-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteRun(r.id)}
+                      disabled={runs.length <= activeFactors.length + 1}
+                      title="Ta bort körning"
+                      className="p-1 text-muted-foreground hover:text-destructive disabled:opacity-30 disabled:pointer-events-none rounded transition-colors cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -1114,12 +1362,13 @@ export function DoeView({ onNotify }: DoeViewProps) {
                     <option value="target">Träffa målvärde</option>
                   </select>
                   {goal === 'target' && (
-                    <input
-                      type="number"
-                      step="any"
+                    <DecimalInput
+                      ariaLabel="Målvärde för Y"
                       value={targetValue}
-                      onChange={(e) => setTargetValue(parseFloat(e.target.value) || 0)}
-                      className="h-8 w-20 px-2 font-mono tabular-nums text-xs bg-card border border-border rounded-lg"
+                      onChangeValue={(val) => {
+                        if (val !== null) setTargetValue(val);
+                      }}
+                      className="h-8 w-20 px-2 font-mono tabular-nums text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   )}
                 </div>
