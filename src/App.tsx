@@ -584,6 +584,29 @@ export default function App() {
         }),
       });
 
+      const extractErrorText = (errValue: unknown): string | null => {
+        if (typeof errValue === 'string' && errValue.trim()) {
+          return errValue.trim();
+        }
+        if (errValue && typeof errValue === 'object') {
+          const obj = errValue as { code?: unknown; message?: unknown };
+          const code = typeof obj.code === 'string' ? obj.code : '';
+          const message = typeof obj.message === 'string' ? obj.message : '';
+          if (code === 'NOT_FOUND') {
+            return 'API-endpointen (/api/analyze) hittades inte på servern. Kontrollera att den senaste versionen med /api/analyze.ts är uppladdad till Vercel.';
+          }
+          if (message) {
+            return code ? `${message} (${code})` : message;
+          }
+          try {
+            return JSON.stringify(errValue);
+          } catch {
+            return null;
+          }
+        }
+        return null;
+      };
+
       const contentType = (response.headers.get('content-type') || '').toLowerCase();
       let finalReport = '';
       let finalStatus: 'RÖD' | 'GUL' | 'GRÖN' = 'GRÖN';
@@ -613,7 +636,7 @@ export default function App() {
               done?: boolean;
               report?: string;
               status?: 'RÖD' | 'GUL' | 'GRÖN';
-              error?: string;
+              error?: unknown;
             };
             try {
               eventPayload = JSON.parse(dataLines.join('\n'));
@@ -621,8 +644,9 @@ export default function App() {
               continue;
             }
 
-            if (eventPayload.error) {
-              throw new Error(eventPayload.error);
+            const streamErr = extractErrorText(eventPayload.error);
+            if (streamErr) {
+              throw new Error(streamErr);
             }
             if (eventPayload.chunk) {
               streamedText += eventPayload.chunk;
@@ -644,7 +668,7 @@ export default function App() {
         setAiAnalysis(finalReport);
       } else {
         const rawText = await response.text();
-        let payload: { report?: string; status?: 'RÖD' | 'GUL' | 'GRÖN'; error?: string } | null = null;
+        let payload: { report?: string; status?: 'RÖD' | 'GUL' | 'GRÖN'; error?: unknown } | null = null;
         try {
           payload = rawText ? JSON.parse(rawText) : null;
         } catch {
@@ -652,8 +676,14 @@ export default function App() {
         }
 
         if (!response.ok) {
-          if (payload?.error) {
-            throw new Error(payload.error);
+          const parsedErr = extractErrorText(payload?.error);
+          if (parsedErr) {
+            throw new Error(parsedErr);
+          }
+          if (response.status === 404) {
+            throw new Error(
+              'API-endpointen (/api/analyze) hittades inte (404). Deploya om projektet till Vercel så att /api/analyze.ts aktiveras.'
+            );
           }
           if (response.status === 504 || response.status === 408) {
             throw new Error('Analysen tog för lång tid (timeout). Försök igen — servern svarade inte i tid.');
