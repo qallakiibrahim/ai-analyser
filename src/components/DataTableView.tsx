@@ -9,7 +9,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { Anomaly, ExcludedPoint, ProductionRow, StatsResult } from '@/src/lib/stats';
-import { exportDatasetToCsv, exportDatasetToExcel } from '@/src/lib/export';
+import { exportDatasetToExcel } from '@/src/lib/export';
 import { PointToExclude } from './ExcludePointModal';
 import { cn } from '@/src/lib/utils';
 import { Card } from './ui/Card';
@@ -18,6 +18,7 @@ import { Button } from './ui/Button';
 interface DataTableViewProps {
   rows: ProductionRow[];
   columns: string[];
+  categoryColumns: string[];
   selectedMetric: string;
   stats: StatsResult;
   anomaliesByRow: Record<number, Anomaly[]>;
@@ -25,6 +26,7 @@ interface DataTableViewProps {
   onRequestExclude: (pt: PointToExclude) => void;
   onRestorePoint: (rowIndex: number) => void;
   onRestoreAll: () => void;
+  onOpenCsvExport: () => void;
   datasetName: string;
   onNotify: (type: 'success' | 'error' | 'info', text: string) => void;
 }
@@ -35,6 +37,7 @@ const PAGE_SIZE = 50;
 export function DataTableView({
   rows,
   columns,
+  categoryColumns,
   selectedMetric,
   stats,
   anomaliesByRow,
@@ -42,6 +45,7 @@ export function DataTableView({
   onRequestExclude,
   onRestorePoint,
   onRestoreAll,
+  onOpenCsvExport,
   datasetName,
   onNotify,
 }: DataTableViewProps) {
@@ -99,22 +103,14 @@ export function DataTableView({
       stats,
       anomaliesByRow,
       datasetName,
-      excludedPoints
+      excludedPoints,
+      categoryColumns
     );
     onNotify('success', 'Excel-rapport (.xlsx) med SPC-sammanfattning och mätdata exporterad.');
   };
 
   const handleExportCsv = () => {
-    exportDatasetToCsv(
-      rows,
-      columns,
-      selectedMetric,
-      stats,
-      anomaliesByRow,
-      datasetName,
-      excludedPoints
-    );
-    onNotify('success', 'Sanerad mätdata exporterad som CSV.');
+    onOpenCsvExport();
   };
 
   return (

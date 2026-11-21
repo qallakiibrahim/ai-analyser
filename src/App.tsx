@@ -12,6 +12,7 @@ import {
   Check,
   X,
   MoreHorizontal,
+  Download,
 } from 'lucide-react';
 import {
   ExcludedPoint,
@@ -62,6 +63,7 @@ import { AiAnalysisView } from '@/src/components/AiAnalysisView';
 import { HistoryView } from '@/src/components/HistoryView';
 import { ImportWizard } from '@/src/components/ImportWizard';
 import { ExcludePointModal, PointToExclude } from '@/src/components/ExcludePointModal';
+import { CsvExportModal } from '@/src/components/CsvExportModal';
 import { SopModal } from '@/src/components/SopModal';
 import { Toast, ToastMessage } from '@/src/components/Toast';
 import { Button } from '@/src/components/ui/Button';
@@ -105,6 +107,7 @@ export default function App() {
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
   const [isSopOpen, setIsSopOpen] = useState<boolean>(false);
   const [isSixpackOpen, setIsSixpackOpen] = useState<boolean>(false);
+  const [isCsvExportOpen, setIsCsvExportOpen] = useState<boolean>(false);
   const [isToolsMenuOpen, setIsToolsMenuOpen] = useState<boolean>(false);
   const [showMovingAverage, setShowMovingAverage] = useState<boolean>(false);
   const [distBins, setDistBins] = useState<number>(12);
@@ -693,6 +696,15 @@ export default function App() {
                   <Button
                     variant="outline"
                     size="sm"
+                    onClick={() => setIsCsvExportOpen(true)}
+                    title="Exportera bearbetat dataset med exkluderade punkter och anomalier till CSV"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Exportera CSV
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => setIsSixpackOpen(true)}
                     title="Öppna 1-sides utskriftsklar Capability Sixpack (PPAP)"
                   >
@@ -1007,6 +1019,7 @@ export default function App() {
               <DataTableView
                 rows={rows}
                 columns={columns}
+                categoryColumns={categoryColumns}
                 selectedMetric={selectedMetric}
                 stats={stats}
                 anomaliesByRow={anomaliesByRow}
@@ -1014,6 +1027,7 @@ export default function App() {
                 onRequestExclude={setPointToExclude}
                 onRestorePoint={handleRestorePoint}
                 onRestoreAll={handleRestoreAllExcluded}
+                onOpenCsvExport={() => setIsCsvExportOpen(true)}
                 datasetName={datasetName}
                 onNotify={notify}
               />
@@ -1072,6 +1086,20 @@ export default function App() {
         point={pointToExclude}
         onClose={() => setPointToExclude(null)}
         onConfirm={handleConfirmExclude}
+      />
+
+      <CsvExportModal
+        isOpen={isCsvExportOpen}
+        onClose={() => setIsCsvExportOpen(false)}
+        rows={rows}
+        columns={columns}
+        categoryColumns={categoryColumns}
+        selectedMetric={selectedMetric}
+        stats={stats}
+        anomaliesByRow={anomaliesByRow}
+        excludedPoints={activeExclusions}
+        datasetName={datasetName}
+        onNotify={notify}
       />
 
       <ImportWizard
