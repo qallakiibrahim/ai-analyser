@@ -467,7 +467,8 @@ export default function App() {
     importedRows: ProductionRow[],
     importedCols: string[],
     importedCatCols: string[],
-    sourceName: string
+    sourceName: string,
+    importedSpecs?: Record<string, SpecLimits>
   ) => {
     setIsStreaming(false);
     setRows(importedRows);
@@ -480,16 +481,23 @@ export default function App() {
     setAiAnalysis(null);
     setAnalysisError(null);
 
-    // Suggest sensible initial tolerances for each imported column based on its real range
+    // Use restored tolerance limits when re-importing an SPC export, otherwise suggest sensible limits
     const nextSpecs: Record<string, SpecLimits> = {};
+    let restoredSpecsCount = 0;
     for (const col of importedCols) {
-      const vals = extractMetricValues(importedRows, col);
-      const suggested = suggestSpecLimits(vals);
-      nextSpecs[col] = {
-        ...suggested,
-        uslLabel: 'USL',
-        lslLabel: 'LSL',
-      };
+      const savedSpec = importedSpecs?.[col];
+      if (savedSpec && savedSpec.usl > savedSpec.lsl) {
+        nextSpecs[col] = savedSpec;
+        restoredSpecsCount++;
+      } else {
+        const vals = extractMetricValues(importedRows, col);
+        const suggested = suggestSpecLimits(vals);
+        nextSpecs[col] = {
+          ...suggested,
+          uslLabel: 'USL',
+          lslLabel: 'LSL',
+        };
+      }
     }
     setSpecsByColumn(nextSpecs);
     setActiveTab('dashboard');
@@ -497,6 +505,8 @@ export default function App() {
       'success',
       `Importerade ${importedRows.length} rader, ${importedCols.length} mätkolumn(er)${
         importedCatCols.length > 0 ? ` och ${importedCatCols.length} gruppkolumn(er)` : ''
+      }${
+        restoredSpecsCount > 0 ? ` (återställde toleransgränser för ${restoredSpecsCount} kolumner)` : ''
       } från "${sourceName}".`
     );
   };

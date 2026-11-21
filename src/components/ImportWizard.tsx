@@ -11,10 +11,22 @@ import {
   Download,
   Calendar,
   Layers,
+  Info,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
-import { ProductionRow } from '../lib/stats';
+import { ProductionRow, SpecLimits } from '../lib/stats';
+import {
+  ParsedImportDataset,
+  isExportedSpcMetadataColumn,
+  parseCsvText,
+  parseExcelOrStringDate,
+  parseNumericCell,
+  parseSpreadsheetBuffer,
+  parseWorkbookSheet,
+} from '../lib/importParser';
 
 interface ImportWizardProps {
   isOpen: boolean;
@@ -23,80 +35,11 @@ interface ImportWizardProps {
     rows: ProductionRow[],
     columns: string[],
     categoryColumns: string[],
-    sourceName: string
+    sourceName: string,
+    importedSpecs?: Record<string, SpecLimits>
   ) => void;
   downloadTemplate: () => void;
   onNotify: (type: 'success' | 'error' | 'info', text: string) => void;
-}
-
-function parseNumericCell(raw: unknown): number {
-  if (typeof raw === 'number') {
-    return Number.isFinite(raw) ? raw : NaN;
-  }
-  if (raw === undefined || raw === null) return NaN;
-  const trimmed = String(raw).trim();
-  if (!trimmed) return NaN;
-
-  // Handle Swedish/European numbers like "1 234,56" or "10,45 mm"
-  let normalized = trimmed.replace(/\s+/g, '');
-  if (normalized.includes(',') && !normalized.includes('.')) {
-    normalized = normalized.replace(',', '.');
-  } else if (normalized.includes(',') && normalized.includes('.')) {
-    // Decide which is decimal separator by last occurrence
-    if (normalized.lastIndexOf(',') > normalized.lastIndexOf('.')) {
-      normalized = normalized.replace(/\./g, '').replace(',', '.');
-    } else {
-      normalized = normalized.replace(/,/g, '');
-    }
-  }
-  const match = normalized.match(/-?\d+(\.\d+)?([eE][+-]?\d+)?/);
-  if (!match) return NaN;
-  const num = Number(match[0]);
-  return Number.isFinite(num) ? num : NaN;
-}
-
-function parseExcelOrStringDate(raw: unknown): Date | null {
-  if (raw === undefined || raw === null || raw === '') return null;
-  if (raw instanceof Date && !isNaN(raw.getTime())) return raw;
-
-  // Excel serial date number (e.g. 45814.5)
-  if (typeof raw === 'number' && raw > 20000 && raw < 90000) {
-    const parsed = XLSX.SSF.parse_date_code(raw);
-    if (parsed) {
-      return new Date(
-        parsed.y,
-        parsed.m - 1,
-        parsed.d,
-        parsed.H || 0,
-        parsed.M || 0,
-        Math.floor(parsed.S || 0)
-      );
-    }
-  }
-
-  const str = String(raw).trim();
-  if (!str) return null;
-
-  // ISO or Swedish YYYY-MM-DD HH:mm(:ss)
-  const isoCandidate = str.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
-  const d1 = new Date(isoCandidate);
-  if (!isNaN(d1.getTime())) return d1;
-
-  // DD/MM/YYYY or DD.MM.YYYY
-  const dmy = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
-  if (dmy) {
-    const d2 = new Date(
-      Number(dmy[3]),
-      Number(dmy[2]) - 1,
-      Number(dmy[1]),
-      Number(dmy[4] || 0),
-      Number(dmy[5] || 0),
-      Number(dmy[6] || 0)
-    );
-    if (!isNaN(d2.getTime())) return d2;
-  }
-
-  return null;
 }
 
 export function ImportWizard({
@@ -111,9 +54,16 @@ export function ImportWizard({
   const [rawText, setRawText] = useState('');
   const [parsedRows, setParsedRows] = useState<Record<string, unknown>[]>([]);
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
+  const [hiddenSpcMetaCols, setHiddenSpcMetaCols] = useState<string[]>([]);
+  const [showSpcMetaCols, setShowSpcMetaCols] = useState(false);
   const [selectedMetricColumns, setSelectedMetricColumns] = useState<string[]>([]);
   const [mapTimestamp, setMapTimestamp] = useState<string>('');
   const [fileName, setFileName] = useState('');
+  const [extractedSpecs, setExtractedSpecs] = useState<Record<string, SpecLimits>>({});
+  const [importNotice, setImportNotice] = useState<string | null>(null);
+  const [workbookRef, setWorkbookRef] = useState<XLSX.WorkBook | null>(null);
+  const [sheetNames, setSheetNames] = useState<string[]>([]);
+  const [activeSheetName, setActiveSheetName] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [cleanseStrategy, setCleanseStrategy] = useState<'skip' | 'prev' | 'average'>('skip');
@@ -123,6 +73,12 @@ export function ImportWizard({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const primaryColumn = selectedMetricColumns[0] || '';
+
+  const visibleColumns = useMemo(() => {
+    if (showSpcMetaCols || hiddenSpcMetaCols.length === 0) return availableColumns;
+    const hiddenSet = new Set(hiddenSpcMetaCols);
+    return availableColumns.filter((c) => !hiddenSet.has(c) || selectedMetricColumns.includes(c));
+  }, [availableColumns, hiddenSpcMetaCols, showSpcMetaCols, selectedMetricColumns]);
 
   const cleansingStats = useMemo(() => {
     if (!primaryColumn || parsedRows.length === 0) {
@@ -164,6 +120,7 @@ export function ImportWizard({
     if (parsedRows.length === 0) return [];
     return availableColumns.filter((col) => {
       if (col === mapTimestamp || selectedMetricColumns.includes(col)) return false;
+      if (isExportedSpcMetadataColumn(col)) return false;
       const uniques = new Set<string>();
       for (const row of parsedRows) {
         const raw = row[col];
@@ -185,58 +142,35 @@ export function ImportWizard({
     setRawText('');
     setParsedRows([]);
     setAvailableColumns([]);
+    setHiddenSpcMetaCols([]);
+    setShowSpcMetaCols(false);
     setSelectedMetricColumns([]);
     setMapTimestamp('');
     setFileName('');
+    setExtractedSpecs({});
+    setImportNotice(null);
+    setWorkbookRef(null);
+    setSheetNames([]);
+    setActiveSheetName('');
     setErrorMsg(null);
     setCleanseStrategy('skip');
     setSortByTimestamp(true);
     setRemoveOutliers(false);
   };
 
-  const setupDetectedColumns = (headers: string[], rows: Record<string, unknown>[], sourceName: string) => {
-    setFileName(sourceName);
-    setAvailableColumns(headers);
-    setParsedRows(rows);
+  const applyParsedDataset = (parsed: ParsedImportDataset) => {
+    setFileName(parsed.sourceName);
+    setAvailableColumns(parsed.headers);
+    setParsedRows(parsed.rows);
+    setMapTimestamp(parsed.detectedTimeCol);
+    setSelectedMetricColumns(parsed.detectedMetricCols);
+    setHiddenSpcMetaCols(parsed.hiddenSpcMetaCols);
+    setShowSpcMetaCols(false);
+    setExtractedSpecs(parsed.extractedSpecs);
+    setImportNotice(parsed.importNotice ?? null);
+    setSheetNames(parsed.sheetNames ?? []);
+    setActiveSheetName(parsed.activeSheetName ?? '');
     setErrorMsg(null);
-
-    const timeCol =
-      headers.find((h) => {
-        const l = h.toLowerCase();
-        return (
-          l.includes('tid') ||
-          l.includes('datum') ||
-          l.includes('time') ||
-          l.includes('date') ||
-          l.includes('stämpel') ||
-          l.includes('klockslag')
-        );
-      }) || '';
-
-    // Detect all columns that have at least 50% numeric values (excluding the timestamp column)
-    const sampleSize = Math.min(rows.length, 40);
-    const detectedNumeric = headers.filter((col) => {
-      if (col === timeCol) return false;
-      let numericCount = 0;
-      let nonEmptyCount = 0;
-      for (let i = 0; i < sampleSize; i++) {
-        const val = rows[i][col];
-        if (val !== undefined && val !== null && String(val).trim() !== '') {
-          nonEmptyCount++;
-          if (!isNaN(parseNumericCell(val))) {
-            numericCount++;
-          }
-        }
-      }
-      return nonEmptyCount > 0 && numericCount / nonEmptyCount >= 0.5;
-    });
-
-    setMapTimestamp(timeCol);
-    setSelectedMetricColumns(
-      detectedNumeric.length > 0
-        ? detectedNumeric
-        : headers.filter((h) => h !== timeCol).slice(0, 1)
-    );
   };
 
   const processRawText = (text: string) => {
@@ -246,55 +180,34 @@ export function ImportWizard({
     }
 
     try {
-      const lines = text.trim().split(/\r?\n/).filter((l) => l.trim().length > 0);
-      if (lines.length < 2) {
-        throw new Error('Minst en rubrikrad och en datarad krävs.');
-      }
-
-      const firstLine = lines[0];
-      let delimiter = '\t';
-      if (!firstLine.includes('\t')) {
-        if (firstLine.includes(';')) delimiter = ';';
-        else if (firstLine.includes(',')) delimiter = ',';
-      }
-
-      const headers = firstLine
-        .split(delimiter)
-        .map((h, i) => h.replace(/^["']|["']$/g, '').trim() || `Kolumn ${i + 1}`);
-
-      const rows: Record<string, unknown>[] = [];
-      for (let i = 1; i < lines.length; i++) {
-        const cells = lines[i].split(delimiter).map((c) => c.replace(/^["']|["']$/g, '').trim());
-        const obj: Record<string, unknown> = {};
-        headers.forEach((h, idx) => {
-          obj[h] = cells[idx] ?? '';
-        });
-        rows.push(obj);
-      }
-
-      setupDetectedColumns(headers, rows, 'Urklipp');
+      const parsed = parseCsvText(text, 'Urklipp');
+      setWorkbookRef(null);
+      applyParsedDataset(parsed);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMsg(`Kunde inte tolka urklipp: ${msg}`);
     }
   };
 
-  const processExcelBuffer = (buffer: ArrayBuffer, name: string) => {
+  const processFileBuffer = (buffer: ArrayBuffer, name: string) => {
     try {
-      const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array', cellDates: true });
-      const sheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[sheetName];
-      const rawData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: '' });
-
-      if (!rawData || rawData.length === 0) {
-        throw new Error('Kalkylbladet är tomt eller saknar rader.');
-      }
-
-      const headers = Object.keys(rawData[0]);
-      setupDetectedColumns(headers, rawData, name);
+      const { parsed, workbook } = parseSpreadsheetBuffer(buffer, name);
+      setWorkbookRef(workbook ?? null);
+      applyParsedDataset(parsed);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMsg(`Kunde inte läsa filen: ${msg}`);
+    }
+  };
+
+  const handleSwitchExcelSheet = (nextSheet: string) => {
+    if (!workbookRef) return;
+    try {
+      const parsed = parseWorkbookSheet(workbookRef, nextSheet, fileName);
+      applyParsedDataset(parsed);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMsg(`Kunde inte läsa kalkylbladet "${nextSheet}": ${msg}`);
     }
   };
 
@@ -304,10 +217,12 @@ export function ImportWizard({
     const reader = new FileReader();
     reader.onload = (evt) => {
       if (evt.target?.result instanceof ArrayBuffer) {
-        processExcelBuffer(evt.target.result, file.name);
+        processFileBuffer(evt.target.result, file.name);
       }
     };
     reader.readAsArrayBuffer(file);
+    // Allow re-uploading the same file name cleanly
+    e.target.value = '';
   };
 
   const handleDrag = (e: React.DragEvent) => {
@@ -325,7 +240,7 @@ export function ImportWizard({
     const reader = new FileReader();
     reader.onload = (evt) => {
       if (evt.target?.result instanceof ArrayBuffer) {
-        processExcelBuffer(evt.target.result, file.name);
+        processFileBuffer(evt.target.result, file.name);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -361,7 +276,6 @@ export function ImportWizard({
     }
 
     try {
-      // Precompute column stats for imputation and optional 3σ outlier removal
       const colStats: Record<string, { mean: number; sd: number; firstValid: number }> = {};
       for (const col of selectedMetricColumns) {
         const nums: number[] = [];
@@ -474,14 +388,21 @@ export function ImportWizard({
         imported.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
       }
 
-      // Re-index cleanly 1..N in final order
       const finalized = imported.map((r, i) => ({ ...r, rowIndex: i + 1 }));
+
+      const matchingSpecs: Record<string, SpecLimits> = {};
+      for (const col of selectedMetricColumns) {
+        if (extractedSpecs[col]) {
+          matchingSpecs[col] = extractedSpecs[col];
+        }
+      }
 
       onImport(
         finalized,
         selectedMetricColumns,
         detectedCategoryColumns,
-        fileName || 'Importerat dataset'
+        fileName || 'Importerat dataset',
+        Object.keys(matchingSpecs).length > 0 ? matchingSpecs : undefined
       );
       handleReset();
       onClose();
@@ -503,7 +424,7 @@ export function ImportWizard({
               Importera mätdata (Excel, CSV eller urklipp)
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Välj fritt vilka numeriska kolumner som ska analyseras — inga värden hittas på automatiskt.
+              Läser rådata och tidigare exporterade SPC-rapporter (CSV &amp; Excel) och återställer toleransgränser automatiskt.
             </p>
           </div>
           <button
@@ -570,14 +491,14 @@ export function ImportWizard({
                     Dra och släpp din Excel- eller CSV-fil här
                   </p>
                   <p className="text-xs text-muted-foreground mt-1 mb-5">
-                    Stöder .xlsx, .xls och .csv med svenska decimalkomman och Excel-datumserienummer
+                    Stöder .xlsx, .xls, .csv (komma eller semikolon) samt exporterade SPC-rapporter
                   </p>
 
                   <input
                     type="file"
                     ref={fileInputRef}
                     onChange={handleFileChange}
-                    accept=".xlsx,.xls,.csv"
+                    accept=".xlsx,.xls,.csv,.tsv,.txt"
                     className="hidden"
                   />
                   <div className="flex flex-wrap items-center justify-center gap-3">
@@ -631,7 +552,7 @@ export function ImportWizard({
           ) : (
             <div className="space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-border text-sm">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   <span className="font-semibold text-foreground">{fileName}</span>
                   <span className="text-muted-foreground">·</span>
@@ -640,7 +561,7 @@ export function ImportWizard({
                   </span>
                   <span className="text-muted-foreground">·</span>
                   <span className="font-mono tabular-nums text-muted-foreground">
-                    {availableColumns.length} kolumner
+                    {selectedMetricColumns.length} mätkolumner valda
                   </span>
                 </div>
                 <button
@@ -652,16 +573,62 @@ export function ImportWizard({
                 </button>
               </div>
 
+              {importNotice && (
+                <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg flex items-start gap-2.5 text-xs text-foreground">
+                  <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                  <p>{importNotice}</p>
+                </div>
+              )}
+
+              {sheetNames.length > 1 && (
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-semibold text-foreground">Excel-flik:</span>
+                  <select
+                    value={activeSheetName}
+                    onChange={(e) => handleSwitchExcelSheet(e.target.value)}
+                    className="h-8 px-2.5 bg-card border border-border rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    {sheetNames.map((sn) => (
+                      <option key={sn} value={sn}>
+                        {sn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {/* Column Selection */}
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-foreground flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-primary" />
-                    Välj mätkolumner att ta med ({selectedMetricColumns.length} valda)
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                    {availableColumns.map((col) => {
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-semibold text-foreground flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-primary" />
+                      Välj mätkolumner att ta med ({selectedMetricColumns.length} valda)
+                    </label>
+                    {hiddenSpcMetaCols.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowSpcMetaCols((prev) => !prev)}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground cursor-pointer"
+                      >
+                        {showSpcMetaCols ? (
+                          <>
+                            <EyeOff className="w-3.5 h-3.5" />
+                            Dölj beräknade SPC-kolumner ({hiddenSpcMetaCols.length})
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="w-3.5 h-3.5" />
+                            Visa dolda SPC-exportkolumner ({hiddenSpcMetaCols.length})
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
+                    {visibleColumns.map((col) => {
                       const checked = selectedMetricColumns.includes(col);
+                      const hasSpec = Boolean(extractedSpecs[col]);
                       return (
                         <label
                           key={col}
@@ -675,11 +642,19 @@ export function ImportWizard({
                             type="checkbox"
                             checked={checked}
                             onChange={() => toggleMetricColumn(col)}
-                            className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
+                            className="w-4 h-4 rounded border-border text-primary focus:ring-primary shrink-0"
                           />
-                          <span className="truncate" title={col}>
+                          <span className="truncate flex-1" title={col}>
                             {col}
                           </span>
+                          {hasSpec && (
+                            <span
+                              className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 shrink-0"
+                              title={`Återställer LSL=${extractedSpecs[col].lsl}, Target=${extractedSpecs[col].target}, USL=${extractedSpecs[col].usl}`}
+                            >
+                              Spec
+                            </span>
+                          )}
                         </label>
                       );
                     })}
@@ -710,7 +685,7 @@ export function ImportWizard({
                       className="w-full h-9 text-xs px-3 bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
                     >
                       <option value="">Ingen (använd radnummer 1..N)</option>
-                      {availableColumns.map((col) => (
+                      {visibleColumns.map((col) => (
                         <option key={col} value={col}>
                           {col}
                         </option>
