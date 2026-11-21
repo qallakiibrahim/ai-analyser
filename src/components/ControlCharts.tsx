@@ -36,6 +36,7 @@ import {
   buildStagedChartSeries,
   detectAutomaticStageSplits,
 } from '@/src/lib/staging';
+import { StageContextSnapshot } from '@/src/lib/aiContext';
 import { PointToExclude } from './ExcludePointModal';
 import { cn } from '@/src/lib/utils';
 import { Card } from './ui/Card';
@@ -59,6 +60,7 @@ interface ControlChartsProps {
   onRestoreAll: () => void;
   showMovingAverage: boolean;
   onToggleMovingAverage: (v: boolean) => void;
+  onStageSnapshotChange?: (snapshot: StageContextSnapshot) => void;
 }
 
 interface CombinedIChartPoint {
@@ -133,6 +135,7 @@ export function ControlCharts({
   onRestoreAll,
   showMovingAverage,
   onToggleMovingAverage,
+  onStageSnapshotChange,
 }: ControlChartsProps) {
   const [chartType, setChartType] = useState<'line' | 'area' | 'bar'>('line');
   const [showSigmaZones, setShowSigmaZones] = useState(true);
@@ -204,6 +207,28 @@ export function ControlCharts({
   );
 
   const isMultiStage = staged.stages.length > 1;
+
+  useEffect(() => {
+    if (!onStageSnapshotChange) return;
+    onStageSnapshotChange({
+      mode: staged.mode,
+      autoNote: staged.autoNote,
+      splitRows: staged.splitRows,
+      stages: staged.stages.map((st) => ({
+        stageIndex: st.stageIndex,
+        label: st.label,
+        startRow: st.startRow,
+        endRow: st.endRow,
+        count: st.count,
+        mean: Number(st.stats.mean.toFixed(4)),
+        stdDev: Number(st.stats.stdDev.toFixed(4)),
+        cpk: st.stats.cpk !== null ? Number(st.stats.cpk.toFixed(3)) : null,
+        ppk: st.stats.ppk !== null ? Number(st.stats.ppk.toFixed(3)) : null,
+        mrBar: Number(st.stats.mrBar.toFixed(4)),
+        oosCount: st.stats.oosCount,
+      })),
+    });
+  }, [staged, onStageSnapshotChange]);
 
   const visibleSeries = useMemo(() => {
     const filtered = zoomRange

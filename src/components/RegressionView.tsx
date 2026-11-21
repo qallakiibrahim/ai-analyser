@@ -37,6 +37,7 @@ import {
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
 import { FittedLinePlotCard } from './FittedLinePlotCard';
+import { RegressionContextSnapshot, buildRegressionSnapshotFromModel } from '@/src/lib/aiContext';
 import { cn } from '@/src/lib/utils';
 
 interface RegressionViewProps {
@@ -46,6 +47,7 @@ interface RegressionViewProps {
   spec: SpecLimits;
   onSelectMetric: (col: string) => void;
   onNotify: (type: 'success' | 'error' | 'info', text: string) => void;
+  onRegressionSnapshotChange?: (snapshot: RegressionContextSnapshot | null) => void;
 }
 
 function fmt(val: number | null | undefined, digits: number = 3): string {
@@ -66,6 +68,7 @@ export function RegressionView({
   spec,
   onSelectMetric,
   onNotify,
+  onRegressionSnapshotChange,
 }: RegressionViewProps) {
   const candidateFactors = useMemo(
     () => columns.filter((c) => c !== selectedMetric),
@@ -125,6 +128,11 @@ export function RegressionView({
     () => fitMultipleRegression(rows, selectedMetric, activeTerms),
     [rows, selectedMetric, activeTerms]
   );
+
+  useEffect(() => {
+    if (!onRegressionSnapshotChange) return;
+    onRegressionSnapshotChange(buildRegressionSnapshotFromModel(model, rows, selectedMetric));
+  }, [model, rows, selectedMetric, onRegressionSnapshotChange]);
 
   // Initialize simulator slider values to factor means whenever model factors change
   useEffect(() => {

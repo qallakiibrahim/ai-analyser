@@ -50,6 +50,7 @@ interface AnalyzeRequestPayload {
     mr?: number | null;
   }>;
   totalRows: number;
+  extendedContext?: Record<string, unknown>;
 }
 
 function isTransientOverloadError(error: unknown): boolean {
@@ -182,42 +183,69 @@ app.post("/api/analyze", async (req: Request, res: Response) => {
     })
     .join("\n");
 
+  const hasExtended =
+    Boolean(body.extendedContext) &&
+    typeof body.extendedContext === "object" &&
+    !Array.isArray(body.extendedContext);
+  const extendedJson = hasExtended
+    ? JSON.stringify(body.extendedContext, null, 2).slice(0, 16000)
+    : "";
+  const hasModelSection =
+    hasExtended &&
+    Boolean(
+      (body.extendedContext as Record<string, unknown>).regression ||
+        (body.extendedContext as Record<string, unknown>).doe
+    );
+
   const today = new Date().toLocaleDateString("sv-SE", {
     year: "numeric",
     month: "long",
     day: "numeric",
   });
 
-  const systemInstruction = `Du är en Senior Statistiker och Kvalitets-/Produktionsingenjör inom industriell kvalitetsteknik (expert på SPC, I-MR, Cp/Cpk, Pp/Ppk, D'Agostino-Pearson normalitetstest, Nelson Rules och rotorsaksanalys / RCA).
+  const systemInstruction = `Du är en Senior Statistiker och Kvalitets-/Produktionsingenjör inom industriell kvalitetsteknik (expert på SPC, I-MR, Cp/Cpk, Pp/Ppk, ISO 22514 icke-normal percentilkapabilitet, D'Agostino-Pearson normalitetstest, Nelson Rules, faser/Stages, envägs-ANOVA, multipel regression, Fitted Line Plot, DOE / försöksplanering och rotorsaksanalys / RCA).
 Skriv alltid på saklig, koncis och handlingsbar svenska.
 Skilj tydligt på Common Cause (inbyggd systemvariation) och Special Cause (särskilda störningar som termisk drift, verktygsslitage, fixtur/uppspänning, råmaterialbatch, mätupplösning eller överjustering/tampering).
+Väv samman ALLA medskickade analysmoduler (SPC, Autopilot/icke-normal Ppk/korrelationer/batch-triage/kategori-ANOVA, Faser/Stages, exkluderade Special Cause-punkter, Regression/Fitted Line och DOE) till en sammanhållen helhetsbild — upprepa inte bara tabeller utan dra slutsatser mellan dem.
 Om processen faktiskt är stabil och kapabel, säg det tydligt och undvik att hitta på problem.
-Svara direkt med efterfrågad Markdown-rapport utan kodblock runt hela svaret. Håll rapporten skarp och kärnfull (ca 350–550 ord).`;
+Svara direkt med efterfrågad Markdown-rapport utan kodblock runt hela svaret. Håll rapporten skarp och kärnfull (ca 450–700 ord).`;
 
-  const prompt = `Analysera följande fullständiga processdata och sammanställ en produktionsrapport:
-- Dataset: ${datasetName} (${totalRows} mätpunkter totalt)
+  const prompt = `Analysera följande fullständiga processdata och sammanställ en sammanhållen produktionsrapport:
+- Dataset: ${datasetName} (${totalRows} aktiva mätpunkter)
 - Mätvariabel: ${metric}
-- Fullständig statistikprofil:
+- Fullständig SPC-statistikprofil:
 ${statsJson}
-- Sammanfattning av avvikelser (alla rader):
+- Sammanfattning av avvikelser (alla aktiva rader):
 ${anomalyJson}
 - Representativt urval av mätpunkter över hela serien (start, avvikelser, mitt, slut):
 ${pointsText}
+${extendedJson ? `- Utökat analysunderlag (Autopilot, Faser/Stages, Exkluderingar, Regression/Fitted Line & DOE):\n${extendedJson}` : ""}
 
 Använd exakt följande Markdown-struktur (utan kodblock runt hela svaret):
 
 # PRODUKTIONSRAPPORT: [KORT SAKLIG RUBRIK]
 **Datum:** ${today}  
-**Dataset:** ${datasetName} (${totalRows} punkter)  
+**Dataset:** ${datasetName} (${totalRows} aktiva punkter)  
 **Mätvariabel:** ${metric}  
 **Status:** [RÖD / GUL / GRÖN]  
 
-## 1. Övergripande bedömning
-[Tydlig sammanfattning av I-MR-stabilitet (både Moving Range och individer), kortsiktig potential (Cp/Cpk) vs långsiktig prestanda (Pp/Ppk), normalfördelningens giltighet (D'Agostino-Pearson K² p-värde, skevhet/kurtosis) och PPM utanför tolerans.]
+## 1. Övergripande bedömning & kapabilitet
+[Sammanfatta I-MR-stabilitet, Cp/Cpk vs Pp/Ppk, normalitetstest (D'Agostino-Pearson) samt icke-normal percentil-Ppk om datan avviker från normalfördelning, PPM utanför tolerans, eventuella exkluderade Special Cause-punkter med angivna orsaker, samt kort lägesbild från batch-triage för övriga kritiska variabler i datasetet.]
 
-## 2. Centrala observationer & rotorsaksdiagnostik
-[Konkreta fynd med hänvisning till radnummer/tidpunkter, brutna Nelson/Western Electric-regler eller bekräftad stabilitet. Skilj på Common Cause och Special Cause och koppla observerade mönster till sannolika fysiska/processrelaterade orsaker.]
+## 2. Faser (Stages), korrelationer & rotorsaksdiagnostik
+[Konkreta fynd med radnummer/tidpunkter och brutna Nelson-regler. Kommentera eventuella aktiva eller auto-detekterade nivåskift (Stages), starkaste korrelationerna mot andra X-variabler och signifikanta skillnader i kategori-ANOVA (t.ex. maskin/skift/batch). Skilj tydligt på Common Cause och Special Cause.]
+${
+  hasModelSection
+    ? `
+## 3. Modellering: Regression, Fitted Line & DOE
+[Analysera multipel regression (R², adj R², p-värde, signifikanta X-faktorer, eventuell multikollinearitet/VIF), bästa kurvform i Fitted Line Plot (Linjär/Kvadratisk/Kubisk enligt AICc) samt — om DOE ingår — signifikanta huvudeffekter, 2-faktorsamspel, eventuell krökning (centrumpunkter) och rekommenderade optimala inställningar.]
 
+## 4. Risk- och trendbedömning
+[Sannolikhet för kassation eller toleransöverskridande om processen fortsätter som i slutet av mätserien.]
+
+## 5. Rekommenderade ingenjörsåtgärder & beslutspunkt
+[3–5 numrerade, kvantifierade och realistiska åtgärder kopplade till konkreta X-parametrar, maskin/skift eller DOE-inställningar, avslutat med ett tydligt stopp-, justerings- eller frisläppningskriterium.]`
+    : `
 ## 3. Risk- och trendbedömning
 [Sannolikhet för kassation eller toleransöverskridande om processen fortsätter som i slutet av mätserien.]
 
@@ -225,7 +253,8 @@ Använd exakt följande Markdown-struktur (utan kodblock runt hela svaret):
 [3–5 numrerade, konkreta och realistiska åtgärder anpassade efter utfallet. Om processen är GRÖN, fokusera på bevakning och bibehållen kontroll.]
 
 ## 5. Beslutspunkt
-[Tydligt kriterium för när processen bör stoppas, justeras eller frisläppas.]`;
+[Tydligt kriterium för när processen bör stoppas, justeras eller frisläppas.]`
+}`;
 
   const wantsStream = req.headers.accept?.includes("text/event-stream");
   const requestController = new AbortController();

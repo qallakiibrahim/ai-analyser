@@ -54,10 +54,12 @@ import {
 } from '@/src/lib/doe';
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
+import { DoeContextSnapshot, buildDoeSnapshot } from '@/src/lib/aiContext';
 import { cn } from '@/src/lib/utils';
 
 interface DoeViewProps {
   onNotify: (type: 'success' | 'error' | 'info', text: string) => void;
+  onDoeSnapshotChange?: (snapshot: DoeContextSnapshot | null) => void;
 }
 
 function fmt(val: number | null | undefined, digits: number = 3): string {
@@ -165,8 +167,9 @@ function DecimalInput({
   );
 }
 
-export function DoeView({ onNotify }: DoeViewProps) {
+export function DoeView({ onNotify, onDoeSnapshotChange }: DoeViewProps) {
   const initial = useMemo(() => createSampleDoeExperiment(), []);
+  const [hasUserEditedDoe, setHasUserEditedDoe] = useState<boolean>(false);
 
   // Experiment Setup State
   const [experimentName, setExperimentName] = useState<string>(initial.experimentName);
@@ -247,8 +250,35 @@ export function DoeView({ onNotify }: DoeViewProps) {
     return optimizeDoeSettings(analysis, activeFactors, design, goal, targetValue);
   }, [analysis, activeFactors, design, goal, targetValue]);
 
+  useEffect(() => {
+    if (!onDoeSnapshotChange) return;
+    onDoeSnapshotChange(
+      buildDoeSnapshot(
+        experimentName,
+        design,
+        responseName || 'Resultat (Y)',
+        responseUnit,
+        activeFactors,
+        analysis,
+        optimization,
+        hasUserEditedDoe
+      )
+    );
+  }, [
+    experimentName,
+    design,
+    responseName,
+    responseUnit,
+    activeFactors,
+    analysis,
+    optimization,
+    hasUserEditedDoe,
+    onDoeSnapshotChange,
+  ]);
+
   // Handlers
   const handleUpdateFactor = (code: string, patch: Partial<DoeFactor>) => {
+    setHasUserEditedDoe(true);
     const nextFactors = factors.map((f) => (f.code === code ? { ...f, ...patch } : f));
     const updatedFactor = nextFactors.find((f) => f.code === code);
     setFactors(nextFactors);
@@ -444,6 +474,7 @@ export function DoeView({ onNotify }: DoeViewProps) {
   };
 
   const handleUpdateResponse = (runId: string, num: number | null) => {
+    setHasUserEditedDoe(true);
     setRuns((prev) =>
       prev.map((r) =>
         r.id === runId
@@ -454,11 +485,13 @@ export function DoeView({ onNotify }: DoeViewProps) {
   };
 
   const handleClearResponses = () => {
+    setHasUserEditedDoe(true);
     setRuns((prev) => prev.map((r) => ({ ...r, response: null })));
     onNotify('info', 'Alla uppmätta Y-värden rensades.');
   };
 
   const handleLoadSample = () => {
+    setHasUserEditedDoe(false);
     const fresh = createSampleDoeExperiment();
     setExperimentName(fresh.experimentName);
     setResponseName(fresh.responseName);

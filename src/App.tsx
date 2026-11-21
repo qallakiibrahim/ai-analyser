@@ -50,6 +50,13 @@ import {
   deleteUserReport,
   SavedReport,
 } from '@/src/lib/firebase';
+import {
+  AiScopeOptions,
+  DoeContextSnapshot,
+  RegressionContextSnapshot,
+  StageContextSnapshot,
+  buildExtendedAnalysisContext,
+} from '@/src/lib/aiContext';
 import { TopBar, ActiveTab } from '@/src/components/TopBar';
 import { KpiOverview } from '@/src/components/KpiOverview';
 import { ControlCharts } from '@/src/components/ControlCharts';
@@ -131,6 +138,22 @@ export default function App() {
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
+  const [stageSnapshot, setStageSnapshot] = useState<StageContextSnapshot | null>(null);
+  const [regressionSnapshot, setRegressionSnapshot] = useState<RegressionContextSnapshot | null>(null);
+  const [doeSnapshot, setDoeSnapshot] = useState<DoeContextSnapshot | null>(null);
+  const [aiScope, setAiScope] = useState<AiScopeOptions>({
+    includeAutopilot: true,
+    includeStagesAndExclusions: true,
+    includeRegression: true,
+    includeDoe: false,
+  });
+
+  const handleDoeSnapshotChange = useCallback((snap: DoeContextSnapshot | null) => {
+    setDoeSnapshot(snap);
+    if (snap?.isModifiedByUser) {
+      setAiScope((prev) => (prev.includeDoe ? prev : { ...prev, includeDoe: true }));
+    }
+  }, []);
 
   const notify = useCallback((type: 'success' | 'error' | 'info', text: string) => {
     setToast({ id: Date.now(), type, text });
@@ -554,6 +577,24 @@ export default function App() {
         byRule[a.ruleCode] = (byRule[a.ruleCode] || 0) + 1;
       }
 
+      const extendedContext = buildExtendedAnalysisContext({
+        scope: aiScope,
+        allRows: rows,
+        activeRows,
+        columns,
+        categoryColumns,
+        selectedMetric,
+        spec: activeSpec,
+        exclusions: activeExclusions,
+        diagnosis,
+        nonNormalCap,
+        correlations,
+        triageItems,
+        stageSnapshot,
+        regressionSnapshot,
+        doeSnapshot,
+      });
+
       setAiAnalysis('');
 
       const response = await fetch('/api/analyze', {
@@ -581,6 +622,7 @@ export default function App() {
           },
           sampledPoints,
           totalRows: activeRows.length,
+          extendedContext,
         }),
       });
 
@@ -1072,6 +1114,7 @@ export default function App() {
                 onRestoreAll={handleRestoreAllExcluded}
                 showMovingAverage={showMovingAverage}
                 onToggleMovingAverage={setShowMovingAverage}
+                onStageSnapshotChange={setStageSnapshot}
               />
               <DistributionAndTrend
                 histogram={histogram}
@@ -1123,13 +1166,14 @@ export default function App() {
                 spec={activeSpec}
                 onSelectMetric={setSelectedMetric}
                 onNotify={notify}
+                onRegressionSnapshotChange={setRegressionSnapshot}
               />
             </div>
           )}
 
           {activeTab === 'doe' && (
             <div className="no-print">
-              <DoeView onNotify={notify} />
+              <DoeView onNotify={notify} onDoeSnapshotChange={handleDoeSnapshotChange} />
             </div>
           )}
 
@@ -1161,6 +1205,19 @@ export default function App() {
               aiAnalysis={aiAnalysis}
               analysisError={analysisError}
               isAnalyzing={isAnalyzing}
+              aiScope={aiScope}
+              scopeMeta={{
+                excludedCount: activeExcludedCount,
+                stageCount: stageSnapshot?.stages.length ?? 1,
+                correlationCount: correlations.length,
+                triageCount: triageItems.length,
+                canRunRegression: columns.length >= 2 && activeRows.length >= 6,
+                hasDoeData: Boolean(doeSnapshot),
+                doeLabel: doeSnapshot
+                  ? `${doeSnapshot.experimentName} (${doeSnapshot.designLabel}, ${doeSnapshot.nCompleted}/${doeSnapshot.nTotal} körningar)`
+                  : null,
+              }}
+              onChangeScope={(patch) => setAiScope((prev) => ({ ...prev, ...patch }))}
               onRunAnalysis={runAiAnalysis}
               onPrint={() => window.print()}
             />
