@@ -36,6 +36,7 @@ import {
 } from '@/src/lib/regression';
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
+import { FittedLinePlotCard } from './FittedLinePlotCard';
 import { cn } from '@/src/lib/utils';
 
 interface RegressionViewProps {
@@ -240,6 +241,15 @@ export function RegressionView({
       }))
       .sort((a, b) => b.absT - a.absT);
   }, [model]);
+
+  // Strongest single X factor to pre-select in the Fitted Line Plot
+  const strongestFactor = useMemo(() => {
+    if (!model) return candidateFactors[0] ?? null;
+    const linearCoefs = model.coefficients
+      .filter((c) => c.degree === 1 && c.factor !== null)
+      .sort((a, b) => Math.abs(b.tStat) - Math.abs(a.tStat));
+    return linearCoefs[0]?.factor ?? model.factors[0] ?? candidateFactors[0] ?? null;
+  }, [model, candidateFactors]);
 
   // Bounds for Actual vs Predicted 45° reference line
   const fitBounds = useMemo(() => {
@@ -552,6 +562,16 @@ export function RegressionView({
               </div>
             )}
           </Card>
+
+          {/* Fitted Line Plot: Linear / Quadratic / Cubic Curve Training + 95% CI & PI */}
+          <FittedLinePlotCard
+            rows={rows}
+            target={selectedMetric}
+            candidateFactors={candidateFactors}
+            preferredFactor={strongestFactor}
+            spec={spec}
+            onNotify={onNotify}
+          />
 
           {/* 2 Core Visuals: Pareto of Standardized Effects + Actual vs Predicted / Residuals */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

@@ -28,7 +28,9 @@ import {
   Check,
   Sparkles,
   Plus,
+  Minus,
   X,
+  FilePlus2,
 } from 'lucide-react';
 import {
   DoeDesignType,
@@ -39,9 +41,13 @@ import {
   analyzeDoe,
   buildInteractionPlotData,
   codedToActual,
+  createBlankDoeExperiment,
   createSampleDoeExperiment,
+  formatFactorLevel,
   generateDoeDesign,
+  getDefaultDesignForFactorCount,
   getDesignLabel,
+  getDesignsForFactorCount,
   getFactorCountForDesign,
   optimizeDoeSettings,
   randomizeRunOrder,
@@ -175,6 +181,8 @@ export function DoeView({ onNotify }: DoeViewProps) {
   const [runs, setRuns] = useState<DoeRun[]>(initial.runs);
   const [includeInteractions, setIncludeInteractions] = useState<boolean>(true);
   const [equationMode, setEquationMode] = useState<'actual' | 'coded'>('actual');
+  const [runMatrixMode, setRunMatrixMode] = useState<'standard' | 'coded' | 'actual'>('standard');
+  const [randomizeOnBuild, setRandomizeOnBuild] = useState<boolean>(true);
   const [copiedEq, setCopiedEq] = useState<boolean>(false);
 
   // Interaction pair selection
@@ -188,6 +196,12 @@ export function DoeView({ onNotify }: DoeViewProps) {
     () => factors.slice(0, activeFactorCount),
     [factors, activeFactorCount]
   );
+  const availableDesigns = useMemo(
+    () => getDesignsForFactorCount(activeFactorCount),
+    [activeFactorCount]
+  );
+  const currentDesignOption =
+    availableDesigns.find((d) => d.id === design) || availableDesigns[0];
 
   // Run live DOE statistical analysis whenever runs / design / factors change
   const analysis = useMemo(
@@ -239,22 +253,65 @@ export function DoeView({ onNotify }: DoeViewProps) {
     const updatedFactor = nextFactors.find((f) => f.code === code);
     setFactors(nextFactors);
 
-    if (updatedFactor && (patch.low !== undefined || patch.high !== undefined)) {
+    if (
+      updatedFactor &&
+      (patch.low !== undefined || patch.high !== undefined || patch.type !== undefined)
+    ) {
       // Recalculate actual run levels live without wiping user's entered Y measurements
       setRuns((prevRuns) =>
-        prevRuns.map((r) => ({
-          ...r,
-          actual: {
-            ...r.actual,
-            [code]: codedToActual(
-              r.coded[code] ?? 0,
-              updatedFactor.low,
-              updatedFactor.high
-            ),
-          },
-        }))
+        prevRuns.map((r) => {
+          const prevCoded = r.coded[code] ?? 0;
+          const nextCodedVal =
+            updatedFactor.type === 'text' && Math.abs(prevCoded) < 0.25
+              ? -1
+              : prevCoded;
+          const nextActualVal =
+            updatedFactor.type === 'text'
+              ? nextCodedVal >= 0
+                ? 1
+                : -1
+              : codedToActual(nextCodedVal, updatedFactor.low, updatedFactor.high);
+          return {
+            ...r,
+            coded: { ...r.coded, [code]: nextCodedVal },
+            actual: { ...r.actual, [code]: nextActualVal },
+          };
+        })
       );
     }
+  };
+
+  const handleSetRunCodedLevel = (
+    runId: string,
+    factorCode: string,
+    codedVal: -1 | 0 | 1
+  ) => {
+    const factor = factors.find((f) => f.code === factorCode);
+    if (!factor) return;
+    const safeCoded: -1 | 0 | 1 =
+      factor.type === 'text' && codedVal === 0 ? -1 : codedVal;
+    const nextActualVal =
+      factor.type === 'text'
+        ? safeCoded >= 0
+          ? 1
+          : -1
+        : codedToActual(safeCoded, factor.low, factor.high);
+
+    setRuns((prev) =>
+      prev.map((r) => {
+        if (r.id !== runId) return r;
+        const nextCoded = { ...r.coded, [factorCode]: safeCoded };
+        const isAllCenter = activeFactors.every(
+          (af) => af.type !== 'text' && Math.abs(nextCoded[af.code] ?? 0) < 0.05
+        );
+        return {
+          ...r,
+          coded: nextCoded,
+          actual: { ...r.actual, [factorCode]: nextActualVal },
+          pointType: isAllCenter ? 'center' : 'corner',
+        };
+      })
+    );
   };
 
   const handleUpdateRunFactor = (
@@ -272,7 +329,7 @@ export function DoeView({ onNotify }: DoeViewProps) {
         if (r.id !== runId) return r;
         const nextCoded = { ...r.coded, [factorCode]: nextCodedVal };
         const isAllCenter = activeFactors.every(
-          (af) => Math.abs(nextCoded[af.code] ?? 0) < 0.05
+          (af) => af.type !== 'text' && Math.abs(nextCoded[af.code] ?? 0) < 0.05
         );
         return {
           ...r,
@@ -290,21 +347,21 @@ export function DoeView({ onNotify }: DoeViewProps) {
     const coded: Record<string, number> = {};
     const actual: Record<string, number> = {};
     for (const f of activeFactors) {
-      coded[f.code] = 0;
-      actual[f.code] = codedToActual(0, f.low, f.high);
+      coded[f.code] = -1;
+      actual[f.code] = f.type === 'text' ? -1 : codedToActual(-1, f.low, f.high);
     }
     const newRun: DoeRun = {
       id: `run-custom-${Date.now()}-${nextStd}`,
       stdOrder: nextStd,
       runOrder: nextRunOrder,
       replicate: 1,
-      pointType: 'center',
+      pointType: 'corner',
       coded,
       actual,
       response: null,
     };
     setRuns((prev) => [...prev, newRun]);
-    onNotify('info', `Lade till körning #${nextRunOrder}. Redigera faktorvärden och Y direkt i raden.`);
+    onNotify('info', `Lade till körning #${nextRunOrder}. Klicka − / 0 / + för att ställa in nivåerna.`);
   };
 
   const handleDeleteRun = (runId: string) => {
@@ -321,7 +378,8 @@ export function DoeView({ onNotify }: DoeViewProps) {
   const handleRebuildDesign = (
     nextDesign: DoeDesignType = design,
     nextReps: number = replicates,
-    nextCenters: number = centerPoints
+    nextCenters: number = centerPoints,
+    shouldRandomize: boolean = randomizeOnBuild
   ) => {
     const k = getFactorCountForDesign(nextDesign);
     const fresh = generateDoeDesign(
@@ -329,7 +387,7 @@ export function DoeView({ onNotify }: DoeViewProps) {
       factors.slice(0, k),
       nextReps,
       nextCenters,
-      true
+      shouldRandomize
     );
     setDesign(nextDesign);
     setReplicates(nextReps);
@@ -337,7 +395,42 @@ export function DoeView({ onNotify }: DoeViewProps) {
     setRuns(fresh);
     onNotify(
       'info',
-      `Skapade ny försöksplan (${getDesignLabel(nextDesign)}, ${fresh.length} körningar, slumpad körordning).`
+      `Skapade försöksplan: ${getDesignLabel(nextDesign)} (${fresh.length} körningar${
+        shouldRandomize ? ', slumpad' : ', standardordning'
+      }).`
+    );
+  };
+
+  const handleChangeFactorCount = (nextCount: number) => {
+    const clamped = Math.max(2, Math.min(5, nextCount));
+    if (clamped === activeFactorCount) return;
+    const nextDesign = getDefaultDesignForFactorCount(clamped);
+    handleRebuildDesign(nextDesign, replicates, centerPoints, randomizeOnBuild);
+  };
+
+  const handleCreateBlankPlan = () => {
+    const fresh = createBlankDoeExperiment(
+      activeFactorCount,
+      1,
+      2,
+      randomizeOnBuild
+    );
+    setExperimentName(fresh.experimentName);
+    setResponseName(fresh.responseName);
+    setResponseUnit(fresh.responseUnit);
+    setDesign(fresh.design);
+    setReplicates(1);
+    setCenterPoints(2);
+    setGoal(fresh.goal);
+    setTargetValue(fresh.targetValue);
+    setFactors(fresh.factors);
+    setRuns(fresh.runs);
+    setRunMatrixMode('standard');
+    setInterFactorA('A');
+    setInterFactorB('B');
+    onNotify(
+      'info',
+      `Skapade tom ${getDesignLabel(fresh.design)}-plan. Fyll i dina faktornamn och Låg (−)/Hög (+) i Steg 1.`
     );
   };
 
@@ -393,8 +486,13 @@ export function DoeView({ onNotify }: DoeViewProps) {
         Typ: r.pointType === 'center' ? 'Centrum' : 'Hörn',
       };
       for (const f of activeFactors) {
-        const colName = f.unit ? `${f.name} (${f.unit})` : f.name;
-        obj[colName] = r.actual[f.code];
+        const c = r.coded[f.code] ?? 0;
+        obj[`${f.code} (±1)`] = c;
+        const colName = f.type === 'text' ? f.name : f.unit ? `${f.name} (${f.unit})` : f.name;
+        obj[colName] =
+          f.type === 'text'
+            ? formatFactorLevel(f, c)
+            : r.actual[f.code];
       }
       obj[respHeader] = r.response !== null ? r.response : '';
       return obj;
@@ -557,7 +655,7 @@ export function DoeView({ onNotify }: DoeViewProps) {
 
   return (
     <div className="space-y-6">
-      {/* STEP 1: Design Builder */}
+      {/* STEP 1: Design Builder (Minitab-inspired, simplified single-screen workflow) */}
       <Card padding="none" className="p-5 space-y-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-start gap-2.5">
@@ -567,140 +665,294 @@ export function DoeView({ onNotify }: DoeViewProps) {
                 DOE — Försöksplanering (Design of Experiments)
               </h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Bygg 2-nivåers faktorförsök, exportera slumpad körplan till produktionen och
-                analysera huvudeffekter, samspel (interactions), kurvatur och optimala inställningar.
+                Välj antal faktorer (2–5) med −/+, ställ in Låg (−) och Hög (+), och klicka direkt
+                på − / 0 / + i körplanen eller mata in dina egna värden.
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleCreateBlankPlan}>
+              <FilePlus2 className="w-4 h-4" />
+              Ny tom plan
+            </Button>
             <Button variant="outline" size="sm" onClick={handleLoadSample}>
               <RotateCcw className="w-4 h-4" />
-              Ladda exempel-DOE (CNC)
+              Exempel-DOE (CNC)
             </Button>
             <Button
               variant="primary"
               size="sm"
-              onClick={() => handleRebuildDesign(design, replicates, centerPoints)}
+              onClick={() =>
+                handleRebuildDesign(design, replicates, centerPoints, randomizeOnBuild)
+              }
             >
               <Sparkles className="w-4 h-4" />
-              Skapa ny körplan
+              Skapa standardplan
             </Button>
           </div>
         </div>
 
-        {/* Design Parameters Row */}
-        <div className="pt-4 border-t border-border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+        {/* Minitab-style Steppers + Design Selector + Response Y */}
+        <div className="pt-4 border-t border-border grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-4 items-end">
+          {/* Factor Count Stepper (− / +) */}
           <div className="lg:col-span-2 space-y-1">
-            <label htmlFor="doe-design-type" className="text-xs font-medium text-muted-foreground">
-              Försöksdesign
-            </label>
-            <select
-              id="doe-design-type"
-              value={design}
-              onChange={(e) => handleRebuildDesign(e.target.value as DoeDesignType, replicates, centerPoints)}
-              className="w-full h-9 px-3 text-xs font-medium bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-            >
-              <option value="2^2">2² Full faktoriell (2 faktorer, 4 hörn)</option>
-              <option value="2^3">2³ Full faktoriell (3 faktorer, 8 hörn)</option>
-              <option value="2^4-1">2⁴⁻¹ Halvfraktion Res IV (4 faktorer, 8 hörn)</option>
-              <option value="2^4">2⁴ Full faktoriell (4 faktorer, 16 hörn)</option>
-            </select>
+            <span className="text-xs font-medium text-muted-foreground block">
+              Antal faktorer (2–5)
+            </span>
+            <div className="inline-flex items-center w-full h-9 rounded-lg border border-border bg-card overflow-hidden">
+              <button
+                type="button"
+                aria-label="Minska antal faktorer"
+                disabled={activeFactorCount <= 2}
+                onClick={() => handleChangeFactorCount(activeFactorCount - 1)}
+                className="h-full px-2.5 text-foreground hover:bg-muted disabled:opacity-35 disabled:pointer-events-none transition-colors cursor-pointer"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <span className="flex-1 text-center font-mono tabular-nums text-sm font-semibold text-foreground">
+                {activeFactorCount}
+              </span>
+              <button
+                type="button"
+                aria-label="Öka antal faktorer"
+                disabled={activeFactorCount >= 5}
+                onClick={() => handleChangeFactorCount(activeFactorCount + 1)}
+                className="h-full px-2.5 text-foreground hover:bg-muted disabled:opacity-35 disabled:pointer-events-none transition-colors cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-1">
-            <label htmlFor="doe-response-name" className="text-xs font-medium text-muted-foreground">
-              Resultatvariabel (Y)
-            </label>
-            <input
-              id="doe-response-name"
-              type="text"
-              value={responseName}
-              onChange={(e) => setResponseName(e.target.value)}
-              className="w-full h-9 px-3 text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-            />
+          {/* Available Designs for chosen factor count */}
+          <div className="lg:col-span-4 space-y-1">
+            <span className="text-xs font-medium text-muted-foreground block">
+              Försöksdesign ({currentDesignOption.resolution})
+            </span>
+            {availableDesigns.length === 1 ? (
+              <div className="h-9 px-3 flex items-center justify-between text-xs font-medium bg-muted/40 border border-border rounded-lg text-foreground">
+                <span>{currentDesignOption.label}</span>
+                <span className="font-mono text-[11px] text-emerald-700 dark:text-emerald-400">
+                  Full
+                </span>
+              </div>
+            ) : (
+              <div
+                role="group"
+                aria-label="Välj försöksdesign"
+                className="inline-flex items-center w-full h-9 p-0.5 bg-muted rounded-lg border border-border"
+              >
+                {availableDesigns.map((opt) => {
+                  const isActive = opt.id === design;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() =>
+                        handleRebuildDesign(opt.id, replicates, centerPoints, randomizeOnBuild)
+                      }
+                      className={cn(
+                        'flex-1 h-full px-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap truncate cursor-pointer',
+                        isActive
+                          ? 'bg-card text-foreground shadow-sm font-semibold'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {opt.shortLabel}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          <div className="space-y-1">
-            <label htmlFor="doe-response-unit" className="text-xs font-medium text-muted-foreground">
-              Enhet
-            </label>
-            <input
-              id="doe-response-unit"
-              type="text"
-              value={responseUnit}
-              onChange={(e) => setResponseUnit(e.target.value)}
-              placeholder="t.ex. µm, mm"
-              className="w-full h-9 px-3 text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-            />
+          {/* Replicates Stepper (− / +) */}
+          <div className="lg:col-span-2 space-y-1">
+            <span className="text-xs font-medium text-muted-foreground block">
+              Replikat (1–3)
+            </span>
+            <div className="inline-flex items-center w-full h-9 rounded-lg border border-border bg-card overflow-hidden">
+              <button
+                type="button"
+                aria-label="Minska replikat"
+                disabled={replicates <= 1}
+                onClick={() =>
+                  handleRebuildDesign(design, replicates - 1, centerPoints, randomizeOnBuild)
+                }
+                className="h-full px-2.5 text-foreground hover:bg-muted disabled:opacity-35 disabled:pointer-events-none transition-colors cursor-pointer"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <span className="flex-1 text-center font-mono tabular-nums text-sm font-semibold text-foreground">
+                {replicates}
+              </span>
+              <button
+                type="button"
+                aria-label="Öka replikat"
+                disabled={replicates >= 3}
+                onClick={() =>
+                  handleRebuildDesign(design, replicates + 1, centerPoints, randomizeOnBuild)
+                }
+                className="h-full px-2.5 text-foreground hover:bg-muted disabled:opacity-35 disabled:pointer-events-none transition-colors cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-1">
-            <label htmlFor="doe-replicates" className="text-xs font-medium text-muted-foreground">
-              Replikat (upprepningar)
-            </label>
-            <select
-              id="doe-replicates"
-              value={replicates}
-              onChange={(e) => handleRebuildDesign(design, Number(e.target.value), centerPoints)}
-              className="w-full h-9 px-3 text-xs font-mono bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-            >
-              <option value={1}>1 (Standard)</option>
-              <option value={2}>2 (Dubbla körningar)</option>
-              <option value={3}>3 (Tripla körningar)</option>
-            </select>
+          {/* Center Points Stepper (− / +) */}
+          <div className="lg:col-span-2 space-y-1">
+            <span className="text-xs font-medium text-muted-foreground block">
+              Centrumpunkter (0–6)
+            </span>
+            <div className="inline-flex items-center w-full h-9 rounded-lg border border-border bg-card overflow-hidden">
+              <button
+                type="button"
+                aria-label="Minska centrumpunkter"
+                disabled={centerPoints <= 0}
+                onClick={() =>
+                  handleRebuildDesign(design, replicates, centerPoints - 1, randomizeOnBuild)
+                }
+                className="h-full px-2.5 text-foreground hover:bg-muted disabled:opacity-35 disabled:pointer-events-none transition-colors cursor-pointer"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <span className="flex-1 text-center font-mono tabular-nums text-sm font-semibold text-foreground">
+                {centerPoints}
+              </span>
+              <button
+                type="button"
+                aria-label="Öka centrumpunkter"
+                disabled={centerPoints >= 6}
+                onClick={() =>
+                  handleRebuildDesign(design, replicates, centerPoints + 1, randomizeOnBuild)
+                }
+                className="h-full px-2.5 text-foreground hover:bg-muted disabled:opacity-35 disabled:pointer-events-none transition-colors cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-1">
-            <label htmlFor="doe-centers" className="text-xs font-medium text-muted-foreground">
-              Centrumpunkter (kurvatur)
+          {/* Response Name + Unit */}
+          <div className="lg:col-span-2 space-y-1">
+            <label htmlFor="doe-response-name" className="text-xs font-medium text-muted-foreground block">
+              Resultat (Y) &amp; Enhet
             </label>
-            <select
-              id="doe-centers"
-              value={centerPoints}
-              onChange={(e) => handleRebuildDesign(design, replicates, Number(e.target.value))}
-              className="w-full h-9 px-3 text-xs font-mono bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-            >
-              <option value={0}>0 (Inga)</option>
-              <option value={2}>2 centrumpunkter</option>
-              <option value={3}>3 centrumpunkter (Rek.)</option>
-              <option value={4}>4 centrumpunkter</option>
-            </select>
+            <div className="flex items-center gap-1.5">
+              <input
+                id="doe-response-name"
+                type="text"
+                value={responseName}
+                onChange={(e) => setResponseName(e.target.value)}
+                placeholder="Resultat Y"
+                className="flex-1 min-w-0 h-9 px-2.5 text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <input
+                id="doe-response-unit"
+                type="text"
+                aria-label="Enhet för Y"
+                value={responseUnit}
+                onChange={(e) => setResponseUnit(e.target.value)}
+                placeholder="µm"
+                className="w-16 h-9 px-2 text-xs bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
           </div>
         </div>
 
+        {/* Quiet Design Hint & Randomize Option */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>
+            <strong className="text-foreground font-medium">{currentDesignOption.label}:</strong>{' '}
+            {currentDesignOption.hint}
+          </span>
+          <label className="inline-flex items-center gap-2 cursor-pointer select-none whitespace-nowrap shrink-0">
+            <input
+              type="checkbox"
+              checked={randomizeOnBuild}
+              onChange={(e) => setRandomizeOnBuild(e.target.checked)}
+              className="w-3.5 h-3.5 rounded border-border text-primary focus:ring-primary"
+            />
+            Slumpa körordning vid ny plan
+          </label>
+        </div>
+
         {/* Factor Levels Editor */}
-        <div className="pt-4 border-t border-border space-y-2.5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs">
+        <div className="pt-4 border-t border-border space-y-3">
+          {/* Plain-Swedish 1-2-3 How-it-works strip */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 rounded-lg bg-muted/40 border border-border text-xs">
             <div>
-              <span className="font-semibold text-foreground">
-                Steg 1 — Faktorinställningar (Låg = −1, Hög = +1)
-              </span>
+              <span className="font-semibold text-foreground">1. Skriv dina faktorer här nere</span>
               <p className="text-[11px] text-muted-foreground mt-0.5">
-                Ändra faktornamn, enhet och låg/hög nivå här för hela försöksplanen — eller skriv in
-                faktiska faktorvärden direkt per körning i Steg 2 nedan.
+                Ange vad du vill testa (t.ex. Temperatur) och välj ett{' '}
+                <strong className="text-blue-700 dark:text-blue-400">Lågt (−)</strong> och ett{' '}
+                <strong className="text-rose-700 dark:text-rose-400">Högt (+)</strong> värde.
               </p>
             </div>
-            <span className="text-muted-foreground font-mono tabular-nums shrink-0">
-              {activeFactors.length} aktiva faktorer · {runs.length} totala körningar
+            <div>
+              <span className="font-semibold text-foreground">2. Körplanen skapas automatiskt</span>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Ändrar du Låg (−) eller Hög (+) här uppdateras alla rader i Steg 2 direkt — du
+                behöver <strong>inte</strong> ändra faktorerna i Steg 2.
+              </p>
+            </div>
+            <div>
+              <span className="font-semibold text-foreground">3. Kör &amp; fyll bara i Y</span>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Följ raderna i Steg 2 i maskinen och skriv in uppmätt resultat (Y). Analys &amp;
+                optimal inställning visas direkt i Steg 3.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <span className="font-semibold text-foreground">
+              Steg 1 — Dina faktorer (klicka i rutorna för att ändra)
             </span>
+            <div className="flex items-center gap-3">
+              <span className="text-muted-foreground font-mono tabular-nums">
+                {activeFactors.length} faktorer · {currentDesignOption.corners} hörn × {replicates}{' '}
+                + {centerPoints} centrum = {runs.length} körningar
+              </span>
+              {activeFactorCount < 5 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleChangeFactorCount(activeFactorCount + 1)}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Lägg till faktor
+                </Button>
+              )}
+            </div>
           </div>
 
           <div className="border border-border rounded-lg overflow-x-auto">
             <table className="w-full text-xs text-left border-collapse">
               <thead>
                 <tr className="bg-muted/60 border-b border-border text-muted-foreground">
-                  <th className="py-2 px-3 font-semibold w-14">Kod</th>
-                  <th className="py-2 px-3 font-semibold">Faktornamn</th>
-                  <th className="py-2 px-3 font-semibold w-28">Enhet</th>
-                  <th className="py-2 px-3 font-semibold w-36">Låg nivå (−1)</th>
-                  <th className="py-2 px-3 font-semibold w-36">Hög nivå (+1)</th>
-                  <th className="py-2 px-3 font-semibold w-28 text-right">Centrum (0)</th>
+                  <th className="py-2 px-3 font-semibold w-12">Kod</th>
+                  <th className="py-2 px-3 font-semibold">Faktornamn (vad testar du?)</th>
+                  <th className="py-2 px-3 font-semibold w-28">Typ</th>
+                  <th className="py-2 px-3 font-semibold w-24">Enhet</th>
+                  <th className="py-2 px-3 font-semibold w-36 text-blue-700 dark:text-blue-400">
+                    Låg nivå (−)
+                  </th>
+                  <th className="py-2 px-3 font-semibold w-36 text-rose-700 dark:text-rose-400">
+                    Hög nivå (+)
+                  </th>
+                  <th className="py-2 px-3 font-semibold w-24 text-right">Centrum (0)</th>
+                  <th className="py-2 px-2 w-9" aria-label="Ta bort faktor" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {activeFactors.map((f) => {
-                  const sameBounds = Math.abs(f.high - f.low) < 1e-12;
+                {activeFactors.map((f, idx) => {
+                  const isText = f.type === 'text';
+                  const sameBounds = !isText && Math.abs(f.high - f.low) < 1e-12;
+                  const canRemoveLast =
+                    idx === activeFactors.length - 1 && activeFactorCount > 2;
                   return (
                     <tr key={f.code}>
                       <td className="py-2 px-3 font-mono font-bold text-primary">{f.code}</td>
@@ -709,54 +961,123 @@ export function DoeView({ onNotify }: DoeViewProps) {
                           type="text"
                           aria-label={`Faktornamn ${f.code}`}
                           value={f.name}
-                          placeholder={`Faktor ${f.code}`}
+                          placeholder={`t.ex. Temperatur, Tryck...`}
                           onChange={(e) => handleUpdateFactor(f.code, { name: e.target.value })}
                           className="w-full h-8 px-2.5 text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                         />
                       </td>
                       <td className="py-2 px-3">
+                        <div className="inline-flex p-0.5 bg-muted rounded-md border border-border/70">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateFactor(f.code, { type: 'numeric' })}
+                            className={cn(
+                              'px-2 py-0.5 text-[11px] font-medium rounded cursor-pointer transition-colors',
+                              !isText
+                                ? 'bg-card text-foreground shadow-sm font-semibold'
+                                : 'text-muted-foreground hover:text-foreground'
+                            )}
+                          >
+                            Tal
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateFactor(f.code, { type: 'text' })}
+                            className={cn(
+                              'px-2 py-0.5 text-[11px] font-medium rounded cursor-pointer transition-colors',
+                              isText
+                                ? 'bg-card text-foreground shadow-sm font-semibold'
+                                : 'text-muted-foreground hover:text-foreground'
+                            )}
+                          >
+                            Text
+                          </button>
+                        </div>
+                      </td>
+                      <td className="py-2 px-3">
                         <input
                           type="text"
                           aria-label={`Enhet ${f.code}`}
-                          value={f.unit}
-                          placeholder="t.ex. °C, mm"
+                          disabled={isText}
+                          value={isText ? '' : f.unit}
+                          placeholder={isText ? '–' : 'mm, °C'}
                           onChange={(e) => handleUpdateFactor(f.code, { unit: e.target.value })}
-                          className="w-full h-8 px-2.5 text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                          className="w-full h-8 px-2 text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-40"
                         />
                       </td>
                       <td className="py-2 px-3">
-                        <DecimalInput
-                          ariaLabel={`Låg nivå för ${f.name}`}
-                          value={f.low}
-                          onChangeValue={(val) => {
-                            if (val !== null) handleUpdateFactor(f.code, { low: val });
-                          }}
-                          className={cn(
-                            'w-full h-8 px-2.5 font-mono tabular-nums text-xs bg-card border rounded-md focus:outline-none focus:ring-2 focus:ring-primary',
-                            sameBounds ? 'border-amber-500' : 'border-border'
-                          )}
-                        />
+                        {isText ? (
+                          <input
+                            type="text"
+                            aria-label={`Låg textnivå för ${f.name}`}
+                            value={f.lowText ?? 'Låg'}
+                            placeholder="t.ex. Standard"
+                            onChange={(e) =>
+                              handleUpdateFactor(f.code, { lowText: e.target.value })
+                            }
+                            className="w-full h-8 px-2.5 text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                          />
+                        ) : (
+                          <DecimalInput
+                            ariaLabel={`Låg nivå för ${f.name}`}
+                            value={f.low}
+                            onChangeValue={(val) => {
+                              if (val !== null) handleUpdateFactor(f.code, { low: val });
+                            }}
+                            className={cn(
+                              'w-full h-8 px-2.5 font-mono tabular-nums text-xs bg-card border rounded-md focus:outline-none focus:ring-2 focus:ring-primary',
+                              sameBounds ? 'border-amber-500' : 'border-border'
+                            )}
+                          />
+                        )}
                       </td>
                       <td className="py-2 px-3">
-                        <DecimalInput
-                          ariaLabel={`Hög nivå för ${f.name}`}
-                          value={f.high}
-                          onChangeValue={(val) => {
-                            if (val !== null) handleUpdateFactor(f.code, { high: val });
-                          }}
-                          className={cn(
-                            'w-full h-8 px-2.5 font-mono tabular-nums text-xs bg-card border rounded-md focus:outline-none focus:ring-2 focus:ring-primary',
-                            sameBounds ? 'border-amber-500' : 'border-border'
-                          )}
-                        />
+                        {isText ? (
+                          <input
+                            type="text"
+                            aria-label={`Hög textnivå för ${f.name}`}
+                            value={f.highText ?? 'Hög'}
+                            placeholder="t.ex. Belagd"
+                            onChange={(e) =>
+                              handleUpdateFactor(f.code, { highText: e.target.value })
+                            }
+                            className="w-full h-8 px-2.5 text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                          />
+                        ) : (
+                          <DecimalInput
+                            ariaLabel={`Hög nivå för ${f.name}`}
+                            value={f.high}
+                            onChangeValue={(val) => {
+                              if (val !== null) handleUpdateFactor(f.code, { high: val });
+                            }}
+                            className={cn(
+                              'w-full h-8 px-2.5 font-mono tabular-nums text-xs bg-card border rounded-md focus:outline-none focus:ring-2 focus:ring-primary',
+                              sameBounds ? 'border-amber-500' : 'border-border'
+                            )}
+                          />
+                        )}
                       </td>
                       <td className="py-2 px-3 text-right font-mono tabular-nums text-muted-foreground">
-                        {sameBounds ? (
+                        {isText ? (
+                          '–'
+                        ) : sameBounds ? (
                           <span className="text-amber-600 dark:text-amber-400 text-[11px] font-sans">
                             Låg = Hög
                           </span>
                         ) : (
                           codedToActual(0, f.low, f.high)
+                        )}
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        {canRemoveLast && (
+                          <button
+                            type="button"
+                            onClick={() => handleChangeFactorCount(activeFactorCount - 1)}
+                            title={`Ta bort faktor ${f.code}`}
+                            className="p-1 text-muted-foreground hover:text-destructive rounded transition-colors cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -770,15 +1091,64 @@ export function DoeView({ onNotify }: DoeViewProps) {
 
       {/* STEP 2: Interactive Run Matrix & Data Entry */}
       <Card padding="none" className="overflow-hidden">
-        <div className="px-5 py-4 border-b border-border flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">
-              Steg 2 — Körplan &amp; Uppmätta resultat ({completedCount} / {runs.length} ifyllda)
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              Skriv in både faktiska faktorvärden (X) och uppmätt {responseName} (Y) direkt i
-              tabellen, eller exportera körplanen till Excel och importera tillbaka.
-            </p>
+        <div className="px-5 py-4 border-b border-border flex flex-col gap-3">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">
+                Steg 2 — Körplan &amp; Uppmätta resultat ({completedCount} / {runs.length} ifyllda)
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                {runMatrixMode === 'standard'
+                  ? 'Körplanen är färdig utifrån Steg 1 — kör enligt inställningarna nedan och skriv bara in uppmätt Y. Behöver du ändra en enskild rad? Växla till Ändra −/+ eller Ändra tal.'
+                  : runMatrixMode === 'coded'
+                  ? 'Manuellt läge: klicka på −, 0 eller + i valfri cell för att ändra en körnings nivå.'
+                  : 'Avancerat läge: skriv in exakt verkligt värde om maskinen kördes på ett annat tal än Låg/Hög.'}
+              </p>
+            </div>
+
+            {/* Calm default vs optional manual editing modes */}
+            <div
+              role="group"
+              aria-label="Redigeringsläge för körplan"
+              className="inline-flex items-center p-1 bg-muted rounded-lg border border-border/70 self-start shrink-0"
+            >
+              <button
+                type="button"
+                onClick={() => setRunMatrixMode('standard')}
+                className={cn(
+                  'px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer',
+                  runMatrixMode === 'standard'
+                    ? 'bg-card text-foreground shadow-sm font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                Fyll bara i Y
+              </button>
+              <button
+                type="button"
+                onClick={() => setRunMatrixMode('coded')}
+                className={cn(
+                  'px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer',
+                  runMatrixMode === 'coded'
+                    ? 'bg-card text-foreground shadow-sm font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                Ändra − / +
+              </button>
+              <button
+                type="button"
+                onClick={() => setRunMatrixMode('actual')}
+                className={cn(
+                  'px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer',
+                  runMatrixMode === 'actual'
+                    ? 'bg-card text-foreground shadow-sm font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                Ändra tal
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -824,7 +1194,7 @@ export function DoeView({ onNotify }: DoeViewProps) {
           </div>
         </div>
 
-        <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+        <div className="overflow-x-auto max-h-[440px] overflow-y-auto">
           <table className="w-full text-xs text-left border-collapse">
             <thead className="sticky top-0 z-10 bg-muted border-b border-border text-muted-foreground">
               <tr>
@@ -832,12 +1202,18 @@ export function DoeView({ onNotify }: DoeViewProps) {
                 <th className="py-2.5 px-2.5 font-semibold w-14">Std #</th>
                 <th className="py-2.5 px-2.5 font-semibold w-24">Typ</th>
                 {activeFactors.map((f) => (
-                  <th key={f.code} className="py-2.5 px-3 font-semibold text-right min-w-[140px]">
+                  <th
+                    key={f.code}
+                    className={cn(
+                      'py-2.5 px-3 font-semibold min-w-[140px]',
+                      runMatrixMode === 'coded' ? 'text-center' : 'text-right'
+                    )}
+                  >
                     {f.code}: {f.name}
-                    {f.unit ? ` (${f.unit})` : ''}
+                    {f.type !== 'text' && f.unit ? ` (${f.unit})` : ''}
                   </th>
                 ))}
-                <th className="py-2.5 px-3 font-semibold text-right w-36">
+                <th className="py-2.5 px-3 font-semibold text-right w-36 text-primary">
                   {responseName}
                   {responseUnit ? ` (${responseUnit})` : ''} (Y)
                 </th>
@@ -868,6 +1244,104 @@ export function DoeView({ onNotify }: DoeViewProps) {
                   {activeFactors.map((f) => {
                     const c = r.coded[f.code] ?? 0;
                     const badge = formatCodedBadge(c);
+                    const isText = f.type === 'text';
+
+                    if (runMatrixMode === 'standard') {
+                      const isLow = c <= -0.5;
+                      const isHigh = c >= 0.5;
+                      const signLabel = isLow ? '−' : isHigh ? '+' : '0';
+                      return (
+                        <td key={f.code} className="py-2 px-3 text-right">
+                          <div className="inline-flex items-center justify-end gap-2">
+                            <span className="text-foreground font-medium">
+                              {formatFactorLevel(f, c, r.actual[f.code])}
+                            </span>
+                            <span
+                              className={cn(
+                                'w-5 text-center font-bold text-xs',
+                                isLow
+                                  ? 'text-blue-700 dark:text-blue-400'
+                                  : isHigh
+                                  ? 'text-rose-700 dark:text-rose-400'
+                                  : 'text-muted-foreground'
+                              )}
+                              title={
+                                isLow
+                                  ? 'Låg nivå (−1)'
+                                  : isHigh
+                                  ? 'Hög nivå (+1)'
+                                  : 'Centrum (0)'
+                              }
+                            >
+                              {signLabel}
+                            </span>
+                          </div>
+                        </td>
+                      );
+                    }
+
+                    if (runMatrixMode === 'coded' || isText) {
+                      const isLow = c <= -0.5;
+                      const isHigh = c >= 0.5;
+                      const isCenter = !isLow && !isHigh;
+                      return (
+                        <td key={f.code} className="py-1.5 px-3 text-center">
+                          <div className="inline-flex flex-col items-center gap-0.5">
+                            <div
+                              role="group"
+                              aria-label={`${f.name} körning ${r.runOrder} nivå`}
+                              className="inline-flex items-center p-0.5 rounded-md border border-border bg-muted/70"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => handleSetRunCodedLevel(r.id, f.code, -1)}
+                                title={`Låg (−1): ${formatFactorLevel(f, -1, f.low)}`}
+                                className={cn(
+                                  'w-7 h-6 rounded text-xs font-bold transition-colors cursor-pointer',
+                                  isLow
+                                    ? 'bg-blue-600 text-white shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-card'
+                                )}
+                              >
+                                −
+                              </button>
+                              {!isText && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetRunCodedLevel(r.id, f.code, 0)}
+                                  title={`Centrum (0): ${codedToActual(0, f.low, f.high)}`}
+                                  className={cn(
+                                    'w-7 h-6 rounded text-[11px] font-semibold transition-colors cursor-pointer',
+                                    isCenter
+                                      ? 'bg-card text-foreground shadow-sm ring-1 ring-border'
+                                      : 'text-muted-foreground hover:text-foreground hover:bg-card'
+                                  )}
+                                >
+                                  0
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleSetRunCodedLevel(r.id, f.code, 1)}
+                                title={`Hög (+1): ${formatFactorLevel(f, 1, f.high)}`}
+                                className={cn(
+                                  'w-7 h-6 rounded text-xs font-bold transition-colors cursor-pointer',
+                                  isHigh
+                                    ? 'bg-rose-600 text-white shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-card'
+                                )}
+                              >
+                                +
+                              </button>
+                            </div>
+                            <span className="text-[10px] text-muted-foreground font-sans truncate max-w-[120px]">
+                              {formatFactorLevel(f, c, r.actual[f.code])}
+                            </span>
+                          </div>
+                        </td>
+                      );
+                    }
+
                     return (
                       <td key={f.code} className="py-1.5 px-3 text-right">
                         <div className="inline-flex items-center justify-end gap-1.5">
@@ -877,17 +1351,25 @@ export function DoeView({ onNotify }: DoeViewProps) {
                             onChangeValue={(val) => handleUpdateRunFactor(r.id, f.code, val)}
                             className="w-20 h-8 px-2 text-right font-mono tabular-nums text-xs bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                           />
-                          <span
-                            title="Kodad nivå (−1 = Låg, 0 = Centrum, +1 = Hög)"
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleSetRunCodedLevel(
+                                r.id,
+                                f.code,
+                                c < -0.5 ? 1 : c > 0.5 ? 0 : -1
+                              )
+                            }
+                            title="Klicka för att växla mellan −1, +1 och 0"
                             className={cn(
-                              'w-10 text-left text-[10px] tabular-nums',
+                              'w-11 h-7 rounded border border-border/70 text-[10px] font-mono tabular-nums cursor-pointer hover:bg-muted transition-colors',
                               badge.isCustom
-                                ? 'text-primary font-semibold'
+                                ? 'text-primary font-semibold border-primary/40'
                                 : 'text-muted-foreground'
                             )}
                           >
-                            ({badge.label})
-                          </span>
+                            {badge.label}
+                          </button>
                         </div>
                       </td>
                     );
@@ -1233,7 +1715,11 @@ export function DoeView({ onNotify }: DoeViewProps) {
                       <Line
                         type="linear"
                         dataKey="bLowMean"
-                        name={`${interactionPlot.factorB.name} Låg (${interactionPlot.factorB.low})`}
+                        name={`${interactionPlot.factorB.name} Låg (${formatFactorLevel(
+                          interactionPlot.factorB,
+                          -1,
+                          interactionPlot.factorB.low
+                        )})`}
                         stroke="#1d4ed8"
                         strokeWidth={2.25}
                         dot={{ r: 5 }}
@@ -1242,7 +1728,11 @@ export function DoeView({ onNotify }: DoeViewProps) {
                       <Line
                         type="linear"
                         dataKey="bHighMean"
-                        name={`${interactionPlot.factorB.name} Hög (${interactionPlot.factorB.high})`}
+                        name={`${interactionPlot.factorB.name} Hög (${formatFactorLevel(
+                          interactionPlot.factorB,
+                          1,
+                          interactionPlot.factorB.high
+                        )})`}
                         stroke="#e11d48"
                         strokeWidth={2.25}
                         dot={{ r: 5 }}
@@ -1269,11 +1759,22 @@ export function DoeView({ onNotify }: DoeViewProps) {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
               {analysis.mainEffectsPlot.map((series) => {
+                const factorMeta = activeFactors.find((f) => f.code === series.code);
                 const miniData = [
-                  { level: `${series.lowLevel}`, mean: Number(series.lowMean.toFixed(4)) },
-                  { level: `${series.highLevel}`, mean: Number(series.highMean.toFixed(4)) },
+                  {
+                    level: factorMeta
+                      ? formatFactorLevel(factorMeta, -1, series.lowLevel)
+                      : `${series.lowLevel}`,
+                    mean: Number(series.lowMean.toFixed(4)),
+                  },
+                  {
+                    level: factorMeta
+                      ? formatFactorLevel(factorMeta, 1, series.highLevel)
+                      : `${series.highLevel}`,
+                    mean: Number(series.highMean.toFixed(4)),
+                  },
                 ];
                 return (
                   <div
@@ -1397,10 +1898,18 @@ export function DoeView({ onNotify }: DoeViewProps) {
                             <span className="font-mono">{levelHint}</span>
                           </div>
                           <div className="font-mono tabular-nums text-base font-bold text-foreground">
-                            {optimization.actualSettings[f.code]}{' '}
-                            <span className="text-xs font-normal text-muted-foreground">
-                              {f.unit}
-                            </span>
+                            {f.type === 'text' ? (
+                              <span className="font-sans">
+                                {formatFactorLevel(f, codedVal)}
+                              </span>
+                            ) : (
+                              <>
+                                {optimization.actualSettings[f.code]}{' '}
+                                <span className="text-xs font-normal text-muted-foreground">
+                                  {f.unit}
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
                       );

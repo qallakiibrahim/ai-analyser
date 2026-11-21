@@ -1,16 +1,21 @@
 import { studentTTwoTailedP, fDistUpperTailP } from './advancedStats';
 import { studentTCritical05 } from './regression';
 
+export type DoeFactorType = 'numeric' | 'text';
+
 export interface DoeFactor {
   id: string;
-  code: string; // 'A', 'B', 'C', 'D'
+  code: string; // 'A', 'B', 'C', 'D', 'E'
   name: string;
   unit: string;
+  type?: DoeFactorType; // defaults to 'numeric'
   low: number;
   high: number;
+  lowText?: string;
+  highText?: string;
 }
 
-export type DoeDesignType = '2^2' | '2^3' | '2^4-1' | '2^4';
+export type DoeDesignType = '2^2' | '2^3' | '2^4-1' | '2^4' | '2^5-1' | '2^5';
 export type DoeGoal = 'minimize' | 'maximize' | 'target';
 
 export interface DoeRun {
@@ -107,12 +112,92 @@ export interface DoeAnalysisResult {
   aliasSummary: string | null;
 }
 
-const CODES = ['A', 'B', 'C', 'D'] as const;
+const CODES = ['A', 'B', 'C', 'D', 'E'] as const;
+
+export interface DoeDesignOption {
+  id: DoeDesignType;
+  shortLabel: string;
+  label: string;
+  corners: number;
+  resolution: 'Full' | 'Res V' | 'Res IV';
+  hint: string;
+}
 
 export function getFactorCountForDesign(design: DoeDesignType): number {
   if (design === '2^2') return 2;
   if (design === '2^3') return 3;
-  return 4;
+  if (design === '2^4-1' || design === '2^4') return 4;
+  return 5;
+}
+
+export function getDesignsForFactorCount(factorCount: number): DoeDesignOption[] {
+  if (factorCount <= 2) {
+    return [
+      {
+        id: '2^2',
+        shortLabel: 'Full faktoriell (4 hörn)',
+        label: '2² Full faktoriell (4 hörn)',
+        corners: 4,
+        resolution: 'Full',
+        hint: 'Alla huvudeffekter och samspel är helt fria.',
+      },
+    ];
+  }
+  if (factorCount === 3) {
+    return [
+      {
+        id: '2^3',
+        shortLabel: 'Full faktoriell (8 hörn)',
+        label: '2³ Full faktoriell (8 hörn)',
+        corners: 8,
+        resolution: 'Full',
+        hint: 'Standardvalet för 3 faktorer — alla samspel (AB, AC, BC) helt fria.',
+      },
+    ];
+  }
+  if (factorCount === 4) {
+    return [
+      {
+        id: '2^4-1',
+        shortLabel: 'Halvfraktion Res IV (8 hörn)',
+        label: '2⁴⁻¹ Halvfraktion Res IV (8 hörn)',
+        corners: 8,
+        resolution: 'Res IV',
+        hint: 'Halverar antalet körningar. Huvudeffekter är fria; 2-samspel är parade (AB=CD).',
+      },
+      {
+        id: '2^4',
+        shortLabel: 'Full faktoriell (16 hörn)',
+        label: '2⁴ Full faktoriell (16 hörn)',
+        corners: 16,
+        resolution: 'Full',
+        hint: 'Alla huvudeffekter och samtliga 2-faktorssamspel är helt fria.',
+      },
+    ];
+  }
+  return [
+    {
+      id: '2^5-1',
+      shortLabel: 'Halvfraktion Res V (16 hörn)',
+      label: '2⁵⁻¹ Halvfraktion Res V (16 hörn)',
+      corners: 16,
+      resolution: 'Res V',
+      hint: 'Minitabs favorit för 5 faktorer: alla huvudeffekter och alla 2-samspel är helt fria.',
+    },
+    {
+      id: '2^5',
+      shortLabel: 'Full faktoriell (32 hörn)',
+      label: '2⁵ Full faktoriell (32 hörn)',
+      corners: 32,
+      resolution: 'Full',
+      hint: 'Fullständig 32-körningars plan för maximal upplösning.',
+    },
+  ];
+}
+
+export function getDefaultDesignForFactorCount(factorCount: number): DoeDesignType {
+  const opts = getDesignsForFactorCount(factorCount);
+  return opts[0].id;
 }
 
 export function getDesignLabel(design: DoeDesignType): string {
@@ -125,6 +210,10 @@ export function getDesignLabel(design: DoeDesignType): string {
       return '2⁴⁻¹ Halvfraktion Res IV (8 hörn)';
     case '2^4':
       return '2⁴ Full faktoriell (16 hörn)';
+    case '2^5-1':
+      return '2⁵⁻¹ Halvfraktion Res V (16 hörn)';
+    case '2^5':
+      return '2⁵ Full faktoriell (32 hörn)';
   }
 }
 
@@ -143,6 +232,30 @@ export function actualToCoded(actualVal: number, low: number, high: number): num
   if (Math.abs(half) < 1e-12) return 0;
   const raw = (actualVal - center) / half;
   return Number(raw.toFixed(4));
+}
+
+export function formatFactorLevel(
+  factor: DoeFactor,
+  codedVal: number,
+  actualVal?: number
+): string {
+  if (factor.type === 'text') {
+    if (codedVal < -0.25) return factor.lowText?.trim() || 'Låg (−)';
+    if (codedVal > 0.25) return factor.highText?.trim() || 'Hög (+)';
+    return 'Centrum';
+  }
+  const num = actualVal ?? codedToActual(codedVal, factor.low, factor.high);
+  return factor.unit ? `${num} ${factor.unit}` : String(num);
+}
+
+export function createDefaultFactors(): DoeFactor[] {
+  return [
+    { id: 'A', code: 'A', name: 'Faktor A', unit: '', type: 'numeric', low: -1, high: 1, lowText: 'Låg', highText: 'Hög' },
+    { id: 'B', code: 'B', name: 'Faktor B', unit: '', type: 'numeric', low: -1, high: 1, lowText: 'Låg', highText: 'Hög' },
+    { id: 'C', code: 'C', name: 'Faktor C', unit: '', type: 'numeric', low: -1, high: 1, lowText: 'Låg', highText: 'Hög' },
+    { id: 'D', code: 'D', name: 'Faktor D', unit: '', type: 'numeric', low: -1, high: 1, lowText: 'Låg', highText: 'Hög' },
+    { id: 'E', code: 'E', name: 'Faktor E', unit: '', type: 'numeric', low: -1, high: 1, lowText: 'Låg', highText: 'Hög' },
+  ];
 }
 
 export function generateDoeDesign(
@@ -167,6 +280,16 @@ export function generateDoeDesign(
       const c = (idx & 4) ? 1 : -1;
       const d = a * b * c;
       baseCorners.push({ A: a, B: b, C: c, D: d });
+    }
+  } else if (design === '2^5-1') {
+    // 16-run Resolution V fractional factorial: E = A * B * C * D
+    for (let idx = 0; idx < 16; idx++) {
+      const a = (idx & 1) ? 1 : -1;
+      const b = (idx & 2) ? 1 : -1;
+      const c = (idx & 4) ? 1 : -1;
+      const d = (idx & 8) ? 1 : -1;
+      const e = a * b * c * d;
+      baseCorners.push({ A: a, B: b, C: c, D: d, E: e });
     }
   } else {
     const cornerCount = 1 << k;
@@ -256,10 +379,11 @@ export function createSampleDoeExperiment(): {
   runs: DoeRun[];
 } {
   const factors: DoeFactor[] = [
-    { id: 'A', code: 'A', name: 'Skärhastighet', unit: 'm/min', low: 120, high: 200 },
-    { id: 'B', code: 'B', name: 'Matning', unit: 'mm/varv', low: 0.12, high: 0.28 },
-    { id: 'C', code: 'C', name: 'Skärdjup', unit: 'mm', low: 0.5, high: 1.5 },
-    { id: 'D', code: 'D', name: 'Kylvätsketryck', unit: 'bar', low: 10, high: 25 },
+    { id: 'A', code: 'A', name: 'Skärhastighet', unit: 'm/min', type: 'numeric', low: 120, high: 200, lowText: 'Låg', highText: 'Hög' },
+    { id: 'B', code: 'B', name: 'Matning', unit: 'mm/varv', type: 'numeric', low: 0.12, high: 0.28, lowText: 'Låg', highText: 'Hög' },
+    { id: 'C', code: 'C', name: 'Skärdjup', unit: 'mm', type: 'numeric', low: 0.5, high: 1.5, lowText: 'Låg', highText: 'Hög' },
+    { id: 'D', code: 'D', name: 'Kylvätsketryck', unit: 'bar', type: 'numeric', low: 10, high: 25, lowText: 'Låg', highText: 'Hög' },
+    { id: 'E', code: 'E', name: 'Skärgeometri', unit: '', type: 'text', low: -1, high: 1, lowText: 'Standard', highText: 'Belagd' },
   ];
 
   const baseRuns = generateDoeDesign('2^3', factors, 1, 3, false);
@@ -285,6 +409,37 @@ export function createSampleDoeExperiment(): {
     design: '2^3',
     goal: 'minimize',
     targetValue: 1.1,
+    factors,
+    runs,
+  };
+}
+
+export function createBlankDoeExperiment(
+  factorCount: number = 3,
+  replicates: number = 1,
+  centerPoints: number = 2,
+  randomize: boolean = false
+): {
+  experimentName: string;
+  responseName: string;
+  responseUnit: string;
+  design: DoeDesignType;
+  goal: DoeGoal;
+  targetValue: number;
+  factors: DoeFactor[];
+  runs: DoeRun[];
+} {
+  const safeCount = Math.max(2, Math.min(5, Math.floor(factorCount)));
+  const design = getDefaultDesignForFactorCount(safeCount);
+  const factors = createDefaultFactors();
+  const runs = generateDoeDesign(design, factors, replicates, centerPoints, randomize);
+  return {
+    experimentName: `Nytt faktorförsök (${getDesignLabel(design)})`,
+    responseName: 'Resultat',
+    responseUnit: '',
+    design,
+    goal: 'minimize',
+    targetValue: 0,
     factors,
     runs,
   };
@@ -371,7 +526,12 @@ function buildDoeTerms(
     label: f.name,
     factors: [f.code],
     isInteraction: false,
-    aliasNote: design === '2^4-1' ? 'Tydlig (Res IV)' : null,
+    aliasNote:
+      design === '2^4-1'
+        ? 'Tydlig (Res IV)'
+        : design === '2^5-1'
+        ? 'Tydlig (Res V)'
+        : null,
   }));
 
   let aliasSummary: string | null = null;
@@ -397,6 +557,10 @@ function buildDoeTerms(
       aliasSummary =
         'Halvfraktion 2⁴⁻¹ (Upplösning IV, generator D = A·B·C): Huvudeffekter är fria från 2-faktorssamspel, medan 2-faktorssamspel är parade: AB = CD, AC = BD och AD = BC.';
     } else {
+      if (design === '2^5-1') {
+        aliasSummary =
+          'Halvfraktion 2⁵⁻¹ (Upplösning V, generator E = A·B·C·D): Både samtliga 5 huvudeffekter och samtliga 10 tvåfaktorssamspel är helt fria från varandra.';
+      }
       for (let i = 0; i < active.length; i++) {
         for (let j = i + 1; j < active.length; j++) {
           terms.push({
@@ -676,8 +840,13 @@ export function analyzeDoe(
   const centerMap: Record<string, number> = {};
   const halfMap: Record<string, number> = {};
   for (const f of activeFactors) {
-    centerMap[f.code] = (f.low + f.high) / 2;
-    halfMap[f.code] = (f.high - f.low) / 2 || 1;
+    if (f.type === 'text') {
+      centerMap[f.code] = 0;
+      halfMap[f.code] = 1;
+    } else {
+      centerMap[f.code] = (f.low + f.high) / 2;
+      halfMap[f.code] = (f.high - f.low) / 2 || 1;
+    }
   }
 
   let actualConst = beta[0];
@@ -790,13 +959,13 @@ export function buildInteractionPlotData(
     factorB,
     points: [
       {
-        levelALabel: `Låg (${factorA.low}${factorA.unit ? ' ' + factorA.unit : ''})`,
+        levelALabel: `Låg (${formatFactorLevel(factorA, -1, factorA.low)})`,
         levelAValue: factorA.low,
         bLowMean: avgFor(-1, -1),
         bHighMean: avgFor(-1, 1),
       },
       {
-        levelALabel: `Hög (${factorA.high}${factorA.unit ? ' ' + factorA.unit : ''})`,
+        levelALabel: `Hög (${formatFactorLevel(factorA, 1, factorA.high)})`,
         levelAValue: factorA.high,
         bLowMean: avgFor(1, -1),
         bHighMean: avgFor(1, 1),
@@ -860,14 +1029,17 @@ export function optimizeDoeSettings(
     }
   }
 
-  // Fine coordinate refinement in [-1, 1] (critical for 'target' goal where interior settings hit exact Target)
+  // Fine coordinate refinement in [-1, 1] for numeric factors (categorical text factors stay discrete ±1)
   for (let pass = 0; pass < 5; pass++) {
     let improved = false;
     for (const f of active) {
       let localBest = bestCfg[f.code];
       let localObj = bestObj;
-      for (let s = 0; s <= 40; s++) {
-        const cand = -1 + (2 * s) / 40;
+      const candidates =
+        f.type === 'text'
+          ? [-1, 1]
+          : Array.from({ length: 41 }, (_, s) => -1 + (2 * s) / 40);
+      for (const cand of candidates) {
         const testCfg = { ...bestCfg, [f.code]: cand };
         const val = objective(testCfg);
         if (val < localObj - 1e-12) {
@@ -886,7 +1058,12 @@ export function optimizeDoeSettings(
 
   const actualSettings: Record<string, number> = {};
   for (const f of active) {
-    actualSettings[f.code] = codedToActual(bestCfg[f.code], f.low, f.high);
+    actualSettings[f.code] =
+      f.type === 'text'
+        ? bestCfg[f.code] >= 0
+          ? 1
+          : -1
+        : codedToActual(bestCfg[f.code], f.low, f.high);
   }
 
   return {

@@ -735,3 +735,368 @@ export function optimizeResponse(
     predIntervalHigh: pred.high,
   };
 }
+
+// --- Fitted Line Plot (Linear / Quadratic / Cubic Polynomial Regression) ---
+
+export type FittedLineDegree = 1 | 2 | 3;
+
+export interface FittedLineCurvePoint {
+  x: number;
+  fit: number;
+  ciLow: number;
+  ciHigh: number;
+  piLow: number;
+  piHigh: number;
+}
+
+export interface FittedLineScatterPoint {
+  rowIndex: number;
+  label: string;
+  x: number;
+  y: number;
+  fitted: number;
+  residual: number;
+}
+
+export interface FittedLineResult {
+  target: string;
+  factor: string;
+  degree: FittedLineDegree;
+  degreeLabel: string;
+  n: number;
+  dfError: number;
+  rSquared: number;
+  adjRSquared: number;
+  rmse: number;
+  aicc: number;
+  fStat: number;
+  modelPValue: number;
+  highestTermPValue: number;
+  isHighestTermSignificant: boolean;
+  equationText: string;
+  originalCoefficients: number[]; // [b0, b1, (b2), (b3)] in original X units
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+  curvePoints: FittedLineCurvePoint[];
+  scatterPoints: FittedLineScatterPoint[];
+}
+
+export interface FittedLineComparison {
+  target: string;
+  factor: string;
+  models: Record<FittedLineDegree, FittedLineResult | null>;
+  recommendedDegree: FittedLineDegree;
+  recommendationReason: string;
+}
+
+function formatEquationCoef(val: number): string {
+  const abs = Math.abs(val);
+  if (abs === 0) return '0';
+  if (abs >= 100) return abs.toFixed(2);
+  if (abs >= 1) return abs.toFixed(4);
+  if (abs >= 0.001) return abs.toFixed(5);
+  return abs.toExponential(3);
+}
+
+export function getDegreeLabel(degree: FittedLineDegree): string {
+  if (degree === 1) return 'Linjär (X)';
+  if (degree === 2) return 'Kvadratisk (X²)';
+  return 'Kubisk (X³)';
+}
+
+/**
+ * Fits a 1st, 2nd, or 3rd degree polynomial regression of Y on a single X (Minitab Fitted Line Plot)
+ * using standardized Z = (X - mean) / sd for numerical stability, then algebraically expands
+ * exact original-unit polynomial coefficients and computes 95% CI & 95% PI bands.
+ */
+export function fitFittedLine(
+  rows: ProductionRow[],
+  target: string,
+  factor: string,
+  degree: FittedLineDegree
+): FittedLineResult | null {
+  const validRows = rows.filter((r) => {
+    const y = r.values[target];
+    const x = r.values[factor];
+    return typeof y === 'number' && Number.isFinite(y) && typeof x === 'number' && Number.isFinite(x);
+  });
+
+  const n = validRows.length;
+  const p = degree + 1;
+  if (n <= p + 1) return null;
+
+  const xVals = validRows.map((r) => r.values[factor]);
+  const yVals = validRows.map((r) => r.values[target]);
+
+  const xMin = Math.min(...xVals);
+  const xMax = Math.max(...xVals);
+  const meanX = xVals.reduce((a, b) => a + b, 0) / n;
+  const sdX = Math.sqrt(xVals.reduce((s, v) => s + (v - meanX) * (v - meanX), 0) / (n - 1));
+  if (sdX < 1e-12 || xMax - xMin < 1e-12) return null;
+
+  // Check we have at least degree + 1 distinct X values
+  const distinctX = new Set(xVals.map((v) => Number(v.toPrecision(8)))).size;
+  if (distinctX <= degree) return null;
+
+  const meanY = yVals.reduce((a, b) => a + b, 0) / n;
+
+  // Build standardized Vandermonde matrix Z = [1, z, z^2, (z^3)]
+  const Z: number[][] = xVals.map((x) => {
+    const z = (x - meanX) / sdX;
+    const row = [1];
+    let zp = 1;
+    for (let d = 1; d <= degree; d++) {
+      zp *= z;
+      row.push(zp);
+    }
+    return row;
+  });
+
+  // Compute Z^T Z and Z^T y
+  const ztz: number[][] = Array.from({ length: p }, () => Array(p).fill(0));
+  const zty: number[] = Array(p).fill(0);
+  for (let i = 0; i < n; i++) {
+    const zi = Z[i];
+    const yi = yVals[i];
+    for (let j = 0; j < p; j++) {
+      zty[j] += zi[j] * yi;
+      for (let k = j; k < p; k++) {
+        ztz[j][k] += zi[j] * zi[k];
+      }
+    }
+  }
+  for (let j = 0; j < p; j++) {
+    for (let k = 0; k < j; k++) ztz[j][k] = ztz[k][j];
+  }
+
+  const ztzInv = invertMatrix(ztz);
+  if (!ztzInv) return null;
+
+  const c: number[] = Array(p).fill(0);
+  for (let j = 0; j < p; j++) {
+    let sum = 0;
+    for (let k = 0; k < p; k++) sum += ztzInv[j][k] * zty[k];
+    c[j] = sum;
+  }
+
+  let ssRes = 0;
+  let ssTot = 0;
+  const fittedVals: number[] = [];
+  for (let i = 0; i < n; i++) {
+    let yHat = 0;
+    for (let j = 0; j < p; j++) yHat += Z[i][j] * c[j];
+    fittedVals.push(yHat);
+    const res = yVals[i] - yHat;
+    ssRes += res * res;
+    ssTot += (yVals[i] - meanY) * (yVals[i] - meanY);
+  }
+
+  const dfModel = degree;
+  const dfError = n - p;
+  const mse = ssRes / Math.max(1, dfError);
+  const rmse = Math.sqrt(mse);
+  const rSquared = ssTot > 1e-15 ? Math.max(0, Math.min(1, 1 - ssRes / ssTot)) : 0;
+  const adjRSquared =
+    dfError > 0 && ssTot > 1e-15 ? 1 - ((1 - rSquared) * (n - 1)) / dfError : rSquared;
+
+  const msModel = (ssTot - ssRes) / Math.max(1, dfModel);
+  let fStat = 0;
+  let modelPValue = 1;
+  if (mse > 1e-24) {
+    fStat = Math.max(0, msModel / mse);
+    modelPValue = fStat > 0 ? fDistUpperTailP(fStat, dfModel, dfError) : 1;
+  } else if (msModel > 1e-12) {
+    fStat = 999999;
+    modelPValue = 0;
+  }
+
+  // Test significance of the highest polynomial term (exact t-test on c[degree])
+  const highestSe = Math.sqrt(Math.max(0, mse * ztzInv[degree][degree]));
+  let highestTermPValue = 1;
+  if (highestSe > 1e-18) {
+    const tHighest = c[degree] / highestSe;
+    highestTermPValue = studentTTwoTailedP(tHighest, dfError);
+  } else if (Math.abs(c[degree]) > 1e-10) {
+    highestTermPValue = 0;
+  }
+
+  const kParams = p + 1;
+  const aic = n * Math.log(Math.max(1e-15, ssRes / n)) + 2 * kParams;
+  const aicc = n - kParams - 1 > 0 ? aic + (2 * kParams * (kParams + 1)) / (n - kParams - 1) : aic;
+
+  // Algebraically uncenter c[0..degree] from z = a*x + b to original X units
+  const a = 1 / sdX;
+  const b = -meanX / sdX;
+  const c0 = c[0] ?? 0;
+  const c1 = c[1] ?? 0;
+  const c2 = c[2] ?? 0;
+  const c3 = c[3] ?? 0;
+
+  const b0 = c0 + c1 * b + c2 * b * b + c3 * b * b * b;
+  const b1 = c1 * a + 2 * c2 * a * b + 3 * c3 * a * b * b;
+  const b2 = c2 * a * a + 3 * c3 * a * a * b;
+  const b3 = c3 * a * a * a;
+  const originalCoefficients =
+    degree === 1 ? [b0, b1] : degree === 2 ? [b0, b1, b2] : [b0, b1, b2, b3];
+
+  const eqParts: string[] = [
+    `${target} = ${b0 < 0 ? '−' : ''}${formatEquationCoef(b0)}`,
+  ];
+  const powerLabels = ['', factor, `${factor}²`, `${factor}³`];
+  for (let d = 1; d <= degree; d++) {
+    const coef = originalCoefficients[d];
+    const sign = coef >= 0 ? ' + ' : ' − ';
+    eqParts.push(`${sign}${formatEquationCoef(coef)} · ${powerLabels[d]}`);
+  }
+  const equationText = eqParts.join('');
+
+  // Generate 60 smooth points along [xMin, xMax] with exact 95% CI & 95% PI bands
+  const tCrit = studentTCritical05(dfError);
+  const gridSteps = 60;
+  const curvePoints: FittedLineCurvePoint[] = [];
+  let yMin = Math.min(...yVals);
+  let yMax = Math.max(...yVals);
+
+  for (let s = 0; s <= gridSteps; s++) {
+    const x = xMin + ((xMax - xMin) * s) / gridSteps;
+    const z = (x - meanX) / sdX;
+    const z0 = [1];
+    let zp = 1;
+    for (let d = 1; d <= degree; d++) {
+      zp *= z;
+      z0.push(zp);
+    }
+
+    let fit = 0;
+    for (let j = 0; j < p; j++) fit += z0[j] * c[j];
+
+    let lev = 0;
+    for (let j = 0; j < p; j++) {
+      for (let k = 0; k < p; k++) {
+        lev += z0[j] * ztzInv[j][k] * z0[k];
+      }
+    }
+    const safeLev = Math.max(0, lev);
+    const ciHalf = tCrit * rmse * Math.sqrt(safeLev);
+    const piHalf = tCrit * rmse * Math.sqrt(1 + safeLev);
+
+    const ciLow = fit - ciHalf;
+    const ciHigh = fit + ciHalf;
+    const piLow = fit - piHalf;
+    const piHigh = fit + piHalf;
+
+    if (piLow < yMin) yMin = piLow;
+    if (piHigh > yMax) yMax = piHigh;
+
+    curvePoints.push({
+      x: Number(x.toFixed(4)),
+      fit: Number(fit.toFixed(4)),
+      ciLow: Number(ciLow.toFixed(4)),
+      ciHigh: Number(ciHigh.toFixed(4)),
+      piLow: Number(piLow.toFixed(4)),
+      piHigh: Number(piHigh.toFixed(4)),
+    });
+  }
+
+  // Scatter points (capped at 350 evenly spaced points for crisp SVG performance)
+  const scatterStep = n > 350 ? Math.ceil(n / 350) : 1;
+  const scatterPoints: FittedLineScatterPoint[] = [];
+  for (let i = 0; i < n; i++) {
+    if (i % scatterStep === 0 || i === n - 1) {
+      scatterPoints.push({
+        rowIndex: validRows[i].rowIndex,
+        label: validRows[i].label,
+        x: Number(xVals[i].toFixed(4)),
+        y: Number(yVals[i].toFixed(4)),
+        fitted: Number(fittedVals[i].toFixed(4)),
+        residual: Number((yVals[i] - fittedVals[i]).toFixed(4)),
+      });
+    }
+  }
+
+  return {
+    target,
+    factor,
+    degree,
+    degreeLabel: getDegreeLabel(degree),
+    n,
+    dfError,
+    rSquared,
+    adjRSquared,
+    rmse,
+    aicc,
+    fStat,
+    modelPValue,
+    highestTermPValue,
+    isHighestTermSignificant: highestTermPValue < 0.05,
+    equationText,
+    originalCoefficients,
+    xMin,
+    xMax,
+    yMin,
+    yMax,
+    curvePoints,
+    scatterPoints,
+  };
+}
+
+/**
+ * Trains Linear (1), Quadratic (2), and Cubic (3) models for Y vs X and recommends
+ * the best curve shape using AICc + significance of higher-order curvature terms.
+ */
+export function compareFittedLineModels(
+  rows: ProductionRow[],
+  target: string,
+  factor: string
+): FittedLineComparison {
+  const m1 = fitFittedLine(rows, target, factor, 1);
+  const m2 = fitFittedLine(rows, target, factor, 2);
+  const m3 = fitFittedLine(rows, target, factor, 3);
+
+  const models: Record<FittedLineDegree, FittedLineResult | null> = {
+    1: m1,
+    2: m2,
+    3: m3,
+  };
+
+  let recommendedDegree: FittedLineDegree = 1;
+  let recommendationReason = 'Linjär modell (rak linje) ger enklast och mest robust passning.';
+
+  if (m1) {
+    let best = m1;
+    // Upgrade to Quadratic only if X² is significant (p < 0.05) AND improves AICc meaningfully
+    if (m2 && m2.isHighestTermSignificant && m2.aicc < best.aicc - 1.5) {
+      best = m2;
+      recommendedDegree = 2;
+      recommendationReason = `Kvadratisk böjning (X²) är statistiskt signifikant (p = ${
+        m2.highestTermPValue < 0.0001 ? '< 0.0001' : m2.highestTermPValue.toFixed(4)
+      }) och höjer justerat R² från ${(m1.adjRSquared * 100).toFixed(1)} % till ${(
+        m2.adjRSquared * 100
+      ).toFixed(1)} %.`;
+    }
+    // Upgrade to Cubic only if X³ is significant (p < 0.05) AND beats current best on AICc
+    if (m3 && m3.isHighestTermSignificant && m3.aicc < best.aicc - 1.5) {
+      const prevAdj = best.adjRSquared;
+      best = m3;
+      recommendedDegree = 3;
+      recommendationReason = `Kubisk S-kurva (X³) är statistiskt signifikant (p = ${
+        m3.highestTermPValue < 0.0001 ? '< 0.0001' : m3.highestTermPValue.toFixed(4)
+      }) och förbättrar justerat R² från ${(prevAdj * 100).toFixed(1)} % till ${(
+        m3.adjRSquared * 100
+      ).toFixed(1)} %.`;
+    }
+    if (recommendedDegree === 1 && m2) {
+      recommendationReason = `Rak linje (Linjär) rekommenderas — extra kurvböjning (X²/X³) förbättrar inte AICc eller är ej signifikant (undviker överanpassning).`;
+    }
+  }
+
+  return {
+    target,
+    factor,
+    models,
+    recommendedDegree,
+    recommendationReason,
+  };
+}
